@@ -208,7 +208,17 @@ export default function EventPage() {
             {cartCount > 0 && !isCartOpen && (
                 <button
                     className="btn btn-primary animate-fade-in"
-                    style={{ position: 'fixed', bottom: '32px', right: '32px', zIndex: 900, boxShadow: '0 10px 25px rgba(0,0,0,0.5)', padding: '16px 24px', borderRadius: '30px' }}
+                    style={{
+                        position: 'fixed',
+                        bottom: '24px',
+                        right: '16px',
+                        zIndex: 900,
+                        boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                        padding: '14px 22px',
+                        borderRadius: '30px',
+                        fontSize: '0.95rem',
+                        fontWeight: 700
+                    }}
                     onClick={() => setIsCartOpen(true)}
                 >
                     🛒 View Cart ({cartCount})
@@ -223,15 +233,49 @@ export default function EventPage() {
                         onClick={() => setIsCartOpen(false)}
                     />
                     <div
-                        className="animate-fade-in"
-                        style={{ position: 'fixed', top: 0, right: 0, width: '400px', maxWidth: '90vw', height: '100vh', background: 'var(--bg-darker)', zIndex: 1000, boxShadow: '-5px 0 30px rgba(0,0,0,0.7)', padding: '32px', display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border-color)', animation: 'fadeIn 0.3s ease-out' }}
+                        className="animate-fade-in cart-drawer-panel"
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 className="gradient-text">Your Order</h2>
-                            <button onClick={() => setIsCartOpen(false)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: '2rem', cursor: 'pointer', lineHeight: '1' }}>×</button>
+                        <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '16px 20px',
+                            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                            background: 'rgba(2, 6, 23, 0.5)'
+                        }}>
+                            <h2 className="gradient-text" style={{ margin: 0, fontSize: '1.35rem' }}>
+                                {success ? 'Order Confirmation' : 'Your Order'}
+                            </h2>
+                            <button
+                                onClick={() => setIsCartOpen(false)}
+                                style={{
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: 'none',
+                                    color: '#fff',
+                                    fontSize: '1.2rem',
+                                    cursor: 'pointer',
+                                    borderRadius: '50%',
+                                    width: '36px',
+                                    height: '36px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    lineHeight: '1'
+                                }}
+                            >
+                                ✕
+                            </button>
                         </div>
 
-                        <div style={{ flex: 1, overflowY: 'auto', paddingRight: '8px' }}>
+                        <div style={{
+                            flex: 1,
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            WebkitOverflowScrolling: 'touch',
+                            padding: '20px 16px 40px',
+                            display: 'flex',
+                            flexDirection: 'column'
+                        }}>
                             {success && lastOrder ? (
                                 <div style={{ margin: '16px 0' }} className="animate-fade-in">
                                     <div style={{ textAlign: 'center', marginBottom: '20px' }}>
@@ -536,53 +580,74 @@ export default function EventPage() {
                                     ))}
                                 </div>
                             )}
-                        </div>
 
-                        {!success && (
-                            <form onSubmit={handleCheckout} style={{ marginTop: '24px', paddingTop: '24px', borderTop: '2px solid rgba(255,255,255,0.1)' }}>
-                                {cart.length > 0 && (
-                                    <div style={{ marginBottom: '24px' }}>
-                                        <h3 style={{ marginBottom: '16px', fontSize: '1.1rem' }}>Customer Details</h3>
-                                        <input type="text" required placeholder="Full Name" value={customerInfo.name} onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })} style={{ width: '100%', marginBottom: '12px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff' }} />
-                                        <input type="email" required placeholder="Email Address" value={customerInfo.email} onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })} style={{ width: '100%', marginBottom: '12px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff' }} />
-                                        <input type="tel" required placeholder="Phone Number" value={customerInfo.phone} onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })} style={{ width: '100%', marginBottom: '24px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff' }} />
+                            {!success && (
+                                <form onSubmit={handleCheckout} style={{ marginTop: '24px', paddingTop: '20px', borderTop: '2px solid rgba(255,255,255,0.1)' }}>
+                                    {cart.length > 0 && (
+                                        <div style={{ marginBottom: '24px' }}>
+                                            <h3 style={{ marginBottom: '16px', fontSize: '1.1rem' }}>Customer Details</h3>
+                                            <input
+                                                type="text"
+                                                required
+                                                placeholder="Full Name"
+                                                value={customerInfo.name}
+                                                onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
+                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '12px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
+                                            />
+                                            <input
+                                                type="email"
+                                                required
+                                                placeholder="Email Address"
+                                                value={customerInfo.email}
+                                                onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })}
+                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '12px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
+                                            />
+                                            <input
+                                                type="tel"
+                                                required
+                                                placeholder="Phone Number"
+                                                value={customerInfo.phone}
+                                                onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
+                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '24px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
+                                            />
 
-                                        <h3 style={{ marginBottom: '12px', fontSize: '1.1rem' }}>Payment Information</h3>
-                                        <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.2)', borderRadius: '8px', padding: '24px', textAlign: 'center', marginBottom: '24px' }}>
-                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>🔒 Secure Stripe Embedded Input Placeholder</span>
+                                            <h3 style={{ marginBottom: '12px', fontSize: '1.1rem' }}>Payment Information</h3>
+                                            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.2)', borderRadius: '8px', padding: '20px', textAlign: 'center', marginBottom: '24px' }}>
+                                                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>🔒 Secure Stripe Embedded Input Placeholder</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
-
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '0.95rem' }}>
-                                    <span style={{ color: 'var(--text-muted)' }}>Subtotal</span>
-                                    <span>${baseTotal.toFixed(2)}</span>
-                                </div>
-                                {calculatedFees.map((fee, idx) => (
-                                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '0.95rem' }}>
-                                        <span style={{ color: 'var(--text-muted)' }}>{fee.name}</span>
-                                        <span>${fee.amount.toFixed(2)}</span>
-                                    </div>
-                                ))}
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', fontSize: '1.25rem', fontWeight: 'bold' }}>
-                                    <span>Total</span>
-                                    <span className="gradient-text">${cartTotal.toFixed(2)}</span>
-                                </div>
-
-                                <button
-                                    type="submit"
-                                    className="btn btn-primary"
-                                    style={{ width: '100%', fontSize: '1.1rem', padding: '16px' }}
-                                    disabled={cart.length === 0 || isCheckingOut}
-                                >
-                                    {isCheckingOut ? (
-                                        'Processing Payment...'
-                                    ) : (
-                                        `Complete Purchase • $${cartTotal.toFixed(2)}`
                                     )}
-                                </button>
-                            </form>
-                        )}
+
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '0.95rem' }}>
+                                        <span style={{ color: 'var(--text-muted)' }}>Subtotal</span>
+                                        <span>${baseTotal.toFixed(2)}</span>
+                                    </div>
+                                    {calculatedFees.map((fee, idx) => (
+                                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '0.95rem' }}>
+                                            <span style={{ color: 'var(--text-muted)' }}>{fee.name}</span>
+                                            <span>${fee.amount.toFixed(2)}</span>
+                                        </div>
+                                    ))}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', fontSize: '1.25rem', fontWeight: 'bold' }}>
+                                        <span>Total</span>
+                                        <span className="gradient-text">${cartTotal.toFixed(2)}</span>
+                                    </div>
+
+                                    <button
+                                        type="submit"
+                                        className="btn btn-primary"
+                                        style={{ width: '100%', fontSize: '1.05rem', padding: '16px', boxSizing: 'border-box' }}
+                                        disabled={cart.length === 0 || isCheckingOut}
+                                    >
+                                        {isCheckingOut ? (
+                                            'Processing Payment...'
+                                        ) : (
+                                            `Complete Purchase • $${cartTotal.toFixed(2)}`
+                                        )}
+                                    </button>
+                                </form>
+                            )}
+                        </div>
                     </div>
                 </>
             )}

@@ -58,6 +58,8 @@ export default function WalletModal({ isOpen, onClose, walletType, order, ticket
                 borderRadius: '24px',
                 maxWidth: '420px',
                 width: '100%',
+                maxHeight: '90dvh',
+                overflowY: 'auto',
                 padding: '24px',
                 boxShadow: '0 25px 60px rgba(0, 0, 0, 0.6)',
                 color: '#fff',
