@@ -340,10 +340,6 @@ export default function TicketPassPage() {
                                 #{order.orderId}
                             </span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Ticket Holder</span>
-                            <span style={{ fontWeight: 500 }}>{order.customer.name}</span>
-                        </div>
                         {currentTicket?.checkedInAt && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent-secondary)' }}>
                                 <span>Checked In Time</span>
