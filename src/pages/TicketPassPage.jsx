@@ -3,6 +3,7 @@ import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useEventData } from '../hooks/useEventData';
 import QRCode from 'qrcode';
 import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
+import WalletModal from '../components/WalletModal';
 
 export default function TicketPassPage() {
     const { orderId } = useParams();
@@ -13,6 +14,7 @@ export default function TicketPassPage() {
     const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
     const [copiedLink, setCopiedLink] = useState(false);
     const [checkInMessage, setCheckInMessage] = useState('');
+    const [walletModalState, setWalletModalState] = useState({ isOpen: false, type: 'apple' });
 
     // Locate the order
     const order = (orders || []).find(o => o.orderId === orderId);
@@ -460,6 +462,69 @@ export default function TicketPassPage() {
                 </div>
             </div>
 
+            {/* Mobile Wallet Integration */}
+            <div style={{
+                marginTop: '16px',
+                padding: '16px',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '16px',
+                textAlign: 'center'
+            }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.5px' }}>
+                    📲 SAVE PASS TO MOBILE WALLET
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <button
+                        type="button"
+                        onClick={() => setWalletModalState({ isOpen: true, type: 'apple' })}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            padding: '12px 14px',
+                            borderRadius: '12px',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            background: '#000000',
+                            color: '#fff',
+                            fontSize: '0.85rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <span style={{ fontSize: '1.05rem' }}></span>
+                        <span>Apple Wallet</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setWalletModalState({ isOpen: true, type: 'google' })}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            padding: '12px 14px',
+                            borderRadius: '12px',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            background: '#000000',
+                            color: '#fff',
+                            fontSize: '0.85rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <span style={{ fontSize: '1.05rem' }}>💳</span>
+                        <span>Google Wallet</span>
+                    </button>
+                </div>
+            </div>
+
             {/* Hyperlink Info Footer */}
             <div style={{ marginTop: '24px', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                 <span>Stored in shareable hyperlink: </span>
@@ -467,6 +532,16 @@ export default function TicketPassPage() {
                     {`/tickets/${order.orderId}`}
                 </span>
             </div>
+
+            {/* Wallet Pass Preview Modal */}
+            <WalletModal
+                isOpen={walletModalState.isOpen}
+                walletType={walletModalState.type}
+                order={order}
+                ticket={currentTicket}
+                event={event}
+                onClose={() => setWalletModalState({ isOpen: false, type: 'apple' })}
+            />
         </div>
     );
 }

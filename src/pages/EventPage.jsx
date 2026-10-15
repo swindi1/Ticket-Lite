@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useEventData } from '../hooks/useEventData';
 import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
+import WalletModal from '../components/WalletModal';
 
 // Generate a random 12-digit number (100,000,000,000 to 999,999,999,999)
 function generateOrderId() {
@@ -20,6 +21,7 @@ export default function EventPage() {
     const [copiedOrderId, setCopiedOrderId] = useState(false);
     const [copiedTicketLink, setCopiedTicketLink] = useState(false);
     const [customerInfo, setCustomerInfo] = useState({ name: '', email: '', phone: '' });
+    const [walletModalState, setWalletModalState] = useState({ isOpen: false, type: 'apple' });
     const [now, setNow] = useState(new Date());
 
     useEffect(() => {
@@ -419,6 +421,69 @@ export default function EventPage() {
                                             </div>
                                         </div>
 
+                                        {/* Mobile Wallet Integration */}
+                                        <div style={{
+                                            marginTop: '6px',
+                                            padding: '12px 14px',
+                                            background: 'rgba(255,255,255,0.03)',
+                                            border: '1px solid rgba(255,255,255,0.08)',
+                                            borderRadius: '10px',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '8px'
+                                        }}>
+                                            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', textAlign: 'center', letterSpacing: '0.5px' }}>
+                                                📲 SAVE TO MOBILE WALLET
+                                            </div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setWalletModalState({ isOpen: true, type: 'apple' })}
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px',
+                                                        padding: '10px 8px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid rgba(255,255,255,0.2)',
+                                                        background: '#000000',
+                                                        color: '#fff',
+                                                        fontSize: '0.8rem',
+                                                        fontWeight: 600,
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                >
+                                                    <span></span>
+                                                    <span>Apple Wallet</span>
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setWalletModalState({ isOpen: true, type: 'google' })}
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px',
+                                                        padding: '10px 8px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid rgba(255,255,255,0.2)',
+                                                        background: '#000000',
+                                                        color: '#fff',
+                                                        fontSize: '0.8rem',
+                                                        fontWeight: 600,
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                >
+                                                    <span>💳</span>
+                                                    <span>Google Wallet</span>
+                                                </button>
+                                            </div>
+                                        </div>
+
                                         <button
                                             type="button"
                                             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.85rem', marginTop: '6px', textDecoration: 'underline' }}
@@ -521,6 +586,15 @@ export default function EventPage() {
                     </div>
                 </>
             )}
+
+            {/* Wallet Pass Preview Modal */}
+            <WalletModal
+                isOpen={walletModalState.isOpen}
+                walletType={walletModalState.type}
+                order={lastOrder}
+                event={event}
+                onClose={() => setWalletModalState({ isOpen: false, type: 'apple' })}
+            />
         </div>
     );
 }
