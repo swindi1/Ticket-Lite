@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useEventData } from '../hooks/useEventData';
 import QRCode from 'qrcode';
+import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
 
 export default function TicketPassPage() {
     const { orderId } = useParams();
@@ -378,6 +379,84 @@ export default function TicketPassPage() {
                             {isCheckedIn ? '✓ Verified & Checked In' : '📷 Simulate Venue Staff Check-In'}
                         </button>
                     </div>
+                </div>
+            </div>
+
+            {/* 1-Tap Calendar Integration */}
+            <div style={{
+                marginTop: '16px',
+                padding: '16px',
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '16px',
+                textAlign: 'center'
+            }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.5px' }}>
+                    📅 ADD EVENT TO PHONE CALENDAR
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            const ticketUrl = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket?.ticketId || ''}`;
+                            downloadIcsCalendar({
+                                title: order.eventTitle,
+                                description: `Tickets for ${order.eventTitle} (${currentTicket?.name || 'General Admission'})`,
+                                location: event?.location || 'Venue',
+                                date: event?.date,
+                                ticketUrl
+                            });
+                        }}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            padding: '10px 12px',
+                            borderRadius: '10px',
+                            border: '1px solid rgba(255, 255, 255, 0.15)',
+                            background: 'rgba(255, 255, 255, 0.06)',
+                            color: '#fff',
+                            fontSize: '0.82rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <span>🍏</span>
+                        <span>Apple / iOS</span>
+                    </button>
+
+                    <a
+                        href={getGoogleCalendarUrl({
+                            title: order.eventTitle,
+                            description: `Tickets for ${order.eventTitle} (${currentTicket?.name || 'General Admission'})`,
+                            location: event?.location || 'Venue',
+                            date: event?.date,
+                            ticketUrl: `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket?.ticketId || ''}`
+                        })}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            padding: '10px 12px',
+                            borderRadius: '10px',
+                            border: '1px solid rgba(255, 255, 255, 0.15)',
+                            background: 'rgba(255, 255, 255, 0.06)',
+                            color: '#fff',
+                            fontSize: '0.82rem',
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        <span>📅</span>
+                        <span>Google</span>
+                    </a>
                 </div>
             </div>
 

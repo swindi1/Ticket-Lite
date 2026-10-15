@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useEventData } from '../hooks/useEventData';
+import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
 
 // Generate a random 12-digit number (100,000,000,000 to 999,999,999,999)
 function generateOrderId() {
@@ -339,6 +340,84 @@ export default function EventPage() {
                                         >
                                             {copiedTicketLink ? '✓ Ticket Link Copied!' : '🔗 Copy Shareable Ticket Link'}
                                         </button>
+
+                                        {/* 1-Tap Calendar Integration */}
+                                        <div style={{
+                                            marginTop: '6px',
+                                            padding: '12px 14px',
+                                            background: 'rgba(255,255,255,0.03)',
+                                            border: '1px solid rgba(255,255,255,0.08)',
+                                            borderRadius: '10px',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '8px'
+                                        }}>
+                                            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', textAlign: 'center', letterSpacing: '0.5px' }}>
+                                                📅 ADD EVENT TO PHONE CALENDAR
+                                            </div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const ticketUrl = `${window.location.origin}/tickets/${lastOrder.orderId}`;
+                                                        downloadIcsCalendar({
+                                                            title: lastOrder.eventTitle,
+                                                            description: `Tickets for ${lastOrder.eventTitle}`,
+                                                            location: event?.location || 'Venue',
+                                                            date: event?.date,
+                                                            ticketUrl
+                                                        });
+                                                    }}
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px',
+                                                        padding: '9px 8px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid rgba(255,255,255,0.15)',
+                                                        background: 'rgba(255,255,255,0.06)',
+                                                        color: '#fff',
+                                                        fontSize: '0.8rem',
+                                                        fontWeight: 600,
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    <span>🍏</span>
+                                                    <span>Apple / iOS</span>
+                                                </button>
+
+                                                <a
+                                                    href={getGoogleCalendarUrl({
+                                                        title: lastOrder.eventTitle,
+                                                        description: `Tickets for ${lastOrder.eventTitle}`,
+                                                        location: event?.location || 'Venue',
+                                                        date: event?.date,
+                                                        ticketUrl: `${window.location.origin}/tickets/${lastOrder.orderId}`
+                                                    })}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px',
+                                                        padding: '9px 8px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid rgba(255,255,255,0.15)',
+                                                        background: 'rgba(255,255,255,0.06)',
+                                                        color: '#fff',
+                                                        fontSize: '0.8rem',
+                                                        fontWeight: 600,
+                                                        textDecoration: 'none',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    <span>📅</span>
+                                                    <span>Google</span>
+                                                </a>
+                                            </div>
+                                        </div>
 
                                         <button
                                             type="button"
