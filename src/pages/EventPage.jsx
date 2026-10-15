@@ -239,7 +239,7 @@ export default function EventPage() {
                             display: 'flex',
                             justifyContent: 'space-between',
                             alignItems: 'center',
-                            padding: '16px 20px',
+                            padding: '16px 20px 16px 28px',
                             borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
                             background: 'rgba(2, 6, 23, 0.5)'
                         }}>
@@ -272,9 +272,10 @@ export default function EventPage() {
                             overflowY: 'auto',
                             overflowX: 'hidden',
                             WebkitOverflowScrolling: 'touch',
-                            padding: '20px 16px 40px',
+                            padding: '20px 20px 60px 28px',
                             display: 'flex',
-                            flexDirection: 'column'
+                            flexDirection: 'column',
+                            boxSizing: 'border-box'
                         }}>
                             {success && lastOrder ? (
                                 <div style={{ margin: '16px 0' }} className="animate-fade-in">
@@ -582,9 +583,9 @@ export default function EventPage() {
                             )}
 
                             {!success && (
-                                <form onSubmit={handleCheckout} style={{ marginTop: '24px', paddingTop: '20px', borderTop: '2px solid rgba(255,255,255,0.1)' }}>
+                                <form onSubmit={handleCheckout} style={{ marginTop: '24px', paddingTop: '20px', borderTop: '2px solid rgba(255,255,255,0.1)', width: '100%', boxSizing: 'border-box' }}>
                                     {cart.length > 0 && (
-                                        <div style={{ marginBottom: '24px' }}>
+                                        <div style={{ marginBottom: '24px', width: '100%', boxSizing: 'border-box' }}>
                                             <h3 style={{ marginBottom: '16px', fontSize: '1.1rem' }}>Customer Details</h3>
                                             <input
                                                 type="text"
@@ -592,7 +593,7 @@ export default function EventPage() {
                                                 placeholder="Full Name"
                                                 value={customerInfo.name}
                                                 onChange={(e) => setCustomerInfo({ ...customerInfo, name: e.target.value })}
-                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '12px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
+                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '12px', padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
                                             />
                                             <input
                                                 type="email"
@@ -600,7 +601,7 @@ export default function EventPage() {
                                                 placeholder="Email Address"
                                                 value={customerInfo.email}
                                                 onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })}
-                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '12px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
+                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '12px', padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
                                             />
                                             <input
                                                 type="tel"
@@ -608,11 +609,11 @@ export default function EventPage() {
                                                 placeholder="Phone Number"
                                                 value={customerInfo.phone}
                                                 onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })}
-                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '24px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
+                                                style={{ width: '100%', boxSizing: 'border-box', marginBottom: '24px', padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff', fontSize: '1rem' }}
                                             />
 
                                             <h3 style={{ marginBottom: '12px', fontSize: '1.1rem' }}>Payment Information</h3>
-                                            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.2)', borderRadius: '8px', padding: '20px', textAlign: 'center', marginBottom: '24px' }}>
+                                            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.2)', borderRadius: '8px', padding: '20px 16px', textAlign: 'center', marginBottom: '24px', width: '100%', boxSizing: 'border-box' }}>
                                                 <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>🔒 Secure Stripe Embedded Input Placeholder</span>
                                             </div>
                                         </div>
