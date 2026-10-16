@@ -12,10 +12,10 @@ export function generateApplePassData({ order, ticket, event }) {
         formatVersion: 1,
         passTypeIdentifier: 'pass.com.vtix.ticket',
         serialNumber: ticketId,
-        teamIdentifier: 'VTIX_TEAM_ID',
-        organizationName: 'V-Tix Lite',
+        teamIdentifier: 'TICKETLITE_TEAM_ID',
+        organizationName: 'Ticket Lite',
         description: `${order.eventTitle} Admission Pass`,
-        logoText: 'V-TIX',
+        logoText: 'TICKET LITE',
         foregroundColor: 'rgb(255, 255, 255)',
         backgroundColor: 'rgb(15, 23, 42)',
         labelColor: 'rgb(148, 163, 184)',
@@ -95,7 +95,7 @@ export function generateGoogleWalletPassData({ order, ticket, event }) {
     return {
         class: {
             id: `vtix_class_${order.eventId || 'event'}`,
-            issuerName: 'V-Tix Lite',
+            issuerName: 'Ticket Lite',
             eventName: {
                 defaultValue: {
                     language: 'en',

@@ -9,7 +9,7 @@ export default function LandingPage() {
         <div className="animate-fade-in">
             <header className="hero">
                 <h1 className="gradient-text">The Ultimate Hybrid Ticketing Platform</h1>
-                <p>V-Tix Lite empowers promoters to sell tickets and merchandise in one sleek, customizable platform.</p>
+                <p>Ticket Lite empowers promoters to sell tickets and merchandise in one sleek, customizable platform.</p>
                 <div className="hero-buttons">
                     <Link to="/portal" className="btn btn-primary">Buy Tickets</Link>
                     <Link to={currentPromoter ? "/dashboard" : "/login"} className="btn btn-primary-reverse">
@@ -19,7 +19,7 @@ export default function LandingPage() {
             </header>
 
             <section className="glass-panel" style={{ marginTop: '60px', maxWidth: '1000px', margin: '60px auto 0' }}>
-                <h2 style={{ marginBottom: '24px' }}>Why choose V-Tix Lite?</h2>
+                <h2 style={{ marginBottom: '24px' }}>Why choose Ticket Lite?</h2>
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '32px' }}>
                     <div>
                         <h3>🎨 Full Customization</h3>

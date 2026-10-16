@@ -18,7 +18,7 @@ function NavigationBar() {
 
   return (
     <nav className="glass-navbar">
-      <Link to="/" className="logo gradient-text">V-Tix Lite</Link>
+      <Link to="/" className="logo gradient-text">Ticket Lite</Link>
       <div className="nav-links">
         <Link to="/">Home</Link>
         <Link to="/portal">Browse Events</Link>

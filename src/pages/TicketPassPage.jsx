@@ -237,7 +237,7 @@ export default function TicketPassPage() {
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                         <span style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1.5px', background: 'rgba(0,0,0,0.3)', padding: '4px 10px', borderRadius: '12px' }}>
-                            V-Tix Official Pass
+                            Ticket Lite Official Pass
                         </span>
                         <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>
                             Pass {activeTicketIndex + 1} of {tickets.length}

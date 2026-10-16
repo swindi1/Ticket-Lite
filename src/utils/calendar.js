@@ -77,7 +77,7 @@ export function downloadIcsCalendar({ title, description, location, date, ticket
     const icsLines = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//V-Tix Lite//EN',
+        'PRODID:-//Ticket Lite//EN',
         'CALSCALE:GREGORIAN',
         'METHOD:PUBLISH',
         'BEGIN:VEVENT',

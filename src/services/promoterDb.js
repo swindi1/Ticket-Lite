@@ -12,7 +12,7 @@ const SEED_PROMOTERS = [
     {
         id: 'promoter-demo-1',
         name: 'Tyler Vance',
-        organization_name: 'V-Tix Live Productions',
+        organization_name: 'Ticket Lite Live Productions',
         phone_number: '(555) 019-2834',
         email: 'promoter@vtix.com',
         password_hash: 'password123',

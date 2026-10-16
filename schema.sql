@@ -1,5 +1,5 @@
 -- ============================================================
--- V-Tix Lite: Cloudflare D1 SQL Schema for Promoter Accounts
+-- Ticket Lite: Cloudflare D1 SQL Schema for Promoter Accounts
 -- Compatible with Cloudflare Workers, Pages Functions & D1 (SQLite)
 -- ============================================================
 
@@ -78,7 +78,7 @@ INSERT OR IGNORE INTO promoter_accounts (id, name, organization_name, phone_numb
 VALUES (
     'promoter-demo-1',
     'Tyler Vance',
-    'V-Tix Live Productions',
+    'Ticket Lite Live Productions',
     '(555) 019-2834',
     'promoter@vtix.com',
     'password123'
