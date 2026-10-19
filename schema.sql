@@ -36,9 +36,9 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_promoter_id ON events(promoter_id);
 
--- Orders Table (with 12-digit order ID)
+-- Orders Table
 CREATE TABLE IF NOT EXISTS orders (
-    order_id TEXT PRIMARY KEY, -- Randomly generated 12-digit number (e.g. '839201948572')
+    order_id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
     promoter_id TEXT,
     customer_name TEXT NOT NULL,
@@ -55,15 +55,15 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_event_id ON orders(event_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_email ON orders(customer_email);
 
--- Individual Scannable Tickets Table (Associated with 12-digit Order ID)
+-- Individual Scannable Tickets Table
 CREATE TABLE IF NOT EXISTS tickets (
-    ticket_id TEXT PRIMARY KEY, -- Unique pass ID (e.g. '839201948572-01')
+    ticket_id TEXT PRIMARY KEY,
     order_id TEXT NOT NULL,
     event_id TEXT NOT NULL,
     ticket_tier_name TEXT NOT NULL,
     price REAL NOT NULL,
     note TEXT,
-    check_in_status TEXT DEFAULT 'valid', -- 'valid' | 'checked_in'
+    check_in_status TEXT DEFAULT 'valid',
     checked_in_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
