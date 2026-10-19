@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { validateLoginInputs } from '../utils/security';
 
 export default function LoginPage() {
     const navigate = useNavigate();
@@ -13,6 +14,12 @@ export default function LoginPage() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
+
+        const validation = validateLoginInputs(email, password);
+        if (!validation.isValid) {
+            setError(validation.error);
+            return;
+        }
 
         try {
             await login(email, password);

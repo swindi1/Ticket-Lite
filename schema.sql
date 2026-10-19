@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE INDEX IF NOT EXISTS idx_tickets_order_id ON tickets(order_id);
 CREATE INDEX IF NOT EXISTS idx_tickets_check_in_status ON tickets(check_in_status);
 
--- Seed default promoter account for initial local testing
+-- Seed default promoter account for initial testing (password: password123)
+-- Stored using salted SHA-256 format: "salt:hash"
 INSERT OR IGNORE INTO promoter_accounts (id, name, organization_name, phone_number, email, password_hash)
 VALUES (
     'promoter-demo-1',
@@ -81,6 +82,6 @@ VALUES (
     'Ticket Lite Live Productions',
     '(555) 019-2834',
     'promoter@vtix.com',
-    'password123'
+    '4f8a1c92b5e7d360a8f1e2d3c4b5a697:7e03ec0aae59f677aa33a7f3cf46251c6cb6ce0a4168dd7df3357e0a113e6d42'
 );
 

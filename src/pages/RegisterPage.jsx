@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { validatePromoterRegistration } from '../utils/security';
 
 export default function RegisterPage() {
     const navigate = useNavigate();
@@ -33,8 +34,16 @@ export default function RegisterPage() {
             return;
         }
 
-        if (formData.password.length < 6) {
-            setError('Password must be at least 6 characters long.');
+        const validation = validatePromoterRegistration({
+            name: formData.name,
+            organizationName: formData.organizationName,
+            phoneNumber: formData.phoneNumber,
+            email: formData.email,
+            password: formData.password
+        });
+
+        if (!validation.isValid) {
+            setError(validation.error);
             return;
         }
 
@@ -236,6 +245,26 @@ export default function RegisterPage() {
                                 }}
                             />
                         </div>
+                    </div>
+
+                    {/* Password Policy & SQL Injection Prevention Guide */}
+                    <div style={{
+                        fontSize: '0.8rem',
+                        color: 'var(--text-muted)',
+                        padding: '12px 14px',
+                        borderRadius: '8px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        lineHeight: '1.45'
+                    }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text-main)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>🛡️</span> Security & Password Policy
+                        </div>
+                        <ul style={{ margin: '0', paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <li>Min. 8 characters with uppercase, lowercase, and a number</li>
+                            <li>Allowed safe symbols: <code style={{ color: 'var(--accent-secondary)' }}>@ $ ! * ? # ^ &amp; . - + ~</code></li>
+                            <li style={{ color: '#fca5a5' }}>Prohibited: SQL command characters (<code style={{ color: '#fca5a5' }}>' &quot; ` ; \ = &lt; &gt; % | --</code>)</li>
+                        </ul>
                     </div>
 
                     <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
