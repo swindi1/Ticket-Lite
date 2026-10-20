@@ -36,11 +36,16 @@ export async function onRequestPost(context) {
             context.env?.resend_api_key ||
             context.env?.RESEND_KEY ||
             context.env?.resend_key ||
-            context.env?.RESEND;
+            context.env?.RESEND ||
+            (typeof globalThis !== 'undefined' && (globalThis.RESEND_API_KEY || globalThis.resend_api_key || globalThis.RESEND));
         const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : null;
 
         if (!apiKey) {
-            const availableKeys = Object.keys(context.env || {}).filter(k => k !== 'ASSETS');
+            const envKeys = Object.keys(context.env || {});
+            const globalKeys = typeof globalThis !== 'undefined'
+                ? Object.keys(globalThis).filter(k => k.toLowerCase().includes('resend'))
+                : [];
+            const availableKeys = [...new Set([...envKeys, ...globalKeys])].filter(k => k !== 'ASSETS');
             return new Response(
                 JSON.stringify({
                     success: false,
