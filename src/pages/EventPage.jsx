@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useEventData } from '../hooks/useEventData';
 import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
 import WalletModal from '../components/WalletModal';
+import { emailService } from '../services/emailService';
 
 // Generate a random 12-digit number (100,000,000,000 to 999,999,999,999)
 function generateOrderId() {
@@ -22,6 +23,7 @@ export default function EventPage() {
     const [copiedTicketLink, setCopiedTicketLink] = useState(false);
     const [customerInfo, setCustomerInfo] = useState({ name: '', email: '', phone: '' });
     const [walletModalState, setWalletModalState] = useState({ isOpen: false, type: 'apple' });
+    const [emailStatus, setEmailStatus] = useState({ loading: false, sent: false, error: null });
     const [now, setNow] = useState(new Date());
 
     useEffect(() => {
@@ -59,7 +61,7 @@ export default function EventPage() {
         if (e) e.preventDefault();
         setIsCheckingOut(true);
 
-        setTimeout(() => {
+        setTimeout(async () => {
             const orderId = generateOrderId();
             const orderRecord = {
                 orderId,
@@ -78,7 +80,27 @@ export default function EventPage() {
             setIsCheckingOut(false);
             setSuccess(true);
             clearCart();
+
+            // Automatically send ticket passes & receipt via Resend
+            setEmailStatus({ loading: true, sent: false, error: null });
+            const emailResult = await emailService.sendTicketConfirmationEmail(orderRecord, event);
+            if (emailResult.success) {
+                setEmailStatus({ loading: false, sent: true, error: null });
+            } else {
+                setEmailStatus({ loading: false, sent: false, error: emailResult.error });
+            }
         }, 1200);
+    };
+
+    const handleResendEmail = async () => {
+        if (!lastOrder || emailStatus.loading) return;
+        setEmailStatus({ loading: true, sent: false, error: null });
+        const res = await emailService.sendTicketConfirmationEmail(lastOrder, event);
+        if (res.success) {
+            setEmailStatus({ loading: false, sent: true, error: null });
+        } else {
+            setEmailStatus({ loading: false, sent: false, error: res.error });
+        }
     };
 
     const baseTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
@@ -357,6 +379,57 @@ export default function EventPage() {
                                         </div>
                                     </div>
 
+                                    {/* Email Delivery Status Card */}
+                                    <div style={{
+                                        padding: '12px 14px',
+                                        borderRadius: '8px',
+                                        background: emailStatus.sent
+                                            ? 'rgba(34, 197, 94, 0.12)'
+                                            : emailStatus.error
+                                            ? 'rgba(239, 68, 68, 0.12)'
+                                            : 'rgba(255, 255, 255, 0.04)',
+                                        border: `1px solid ${emailStatus.sent ? 'rgba(34, 197, 94, 0.3)' : emailStatus.error ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        gap: '12px',
+                                        fontSize: '0.85rem'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                                            <span style={{ fontSize: '1.1rem' }}>{emailStatus.loading ? '⏳' : emailStatus.sent ? '✉️' : '⚠️'}</span>
+                                            <div style={{ lineHeight: '1.3' }}>
+                                                <div style={{ fontWeight: 600, color: emailStatus.sent ? '#86efac' : emailStatus.error ? '#fca5a5' : '#ffffff' }}>
+                                                    {emailStatus.loading ? 'Sending ticket passes...' : emailStatus.sent ? 'Tickets Emailed!' : 'Email Delivery Notice'}
+                                                </div>
+                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                                                    {emailStatus.loading
+                                                        ? `Dispatching to ${lastOrder.customer.email}`
+                                                        : emailStatus.sent
+                                                        ? `Confirmation sent to ${lastOrder.customer.email}`
+                                                        : emailStatus.error || 'Resend API notice'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            disabled={emailStatus.loading}
+                                            onClick={handleResendEmail}
+                                            style={{
+                                                background: 'rgba(255,255,255,0.08)',
+                                                border: '1px solid rgba(255,255,255,0.15)',
+                                                borderRadius: '6px',
+                                                color: '#fff',
+                                                fontSize: '0.78rem',
+                                                padding: '6px 10px',
+                                                cursor: emailStatus.loading ? 'wait' : 'pointer',
+                                                fontWeight: 500,
+                                                whiteSpace: 'nowrap'
+                                            }}
+                                        >
+                                            {emailStatus.loading ? 'Sending...' : 'Resend'}
+                                        </button>
+                                    </div>
+
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                         <Link
                                             to={`/tickets/${lastOrder.orderId}`}
@@ -538,6 +611,7 @@ export default function EventPage() {
                                                 setLastOrder(null);
                                                 setCopiedOrderId(false);
                                                 setCopiedTicketLink(false);
+                                                setEmailStatus({ loading: false, sent: false, error: null });
                                             }}
                                         >
                                             Done
