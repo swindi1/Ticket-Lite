@@ -51,9 +51,17 @@ export const emailService = {
             const data = await res.json().catch(() => ({}));
 
             if (!res.ok) {
+                let errorMsg = data.error;
+                if (!errorMsg) {
+                    if (res.status === 405) {
+                        errorMsg = 'API endpoint not supported on this preview host (405). Please ensure you are viewing the live Cloudflare Pages URL.';
+                    } else {
+                        errorMsg = `Server responded with status ${res.status}`;
+                    }
+                }
                 return {
                     success: false,
-                    error: data.error || `Server responded with status ${res.status}`
+                    error: errorMsg
                 };
             }
 
