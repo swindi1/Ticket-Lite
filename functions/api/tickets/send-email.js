@@ -38,7 +38,10 @@ export async function onRequestPost(context) {
             context.env?.resend_key ||
             context.env?.RESEND ||
             (typeof globalThis !== 'undefined' && (globalThis.RESEND_API_KEY || globalThis.resend_api_key || globalThis.RESEND));
-        const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : null;
+        let apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim().replace(/^["']|["']$/g, '') : null;
+        if (apiKey && apiKey.toLowerCase().startsWith('bearer ')) {
+            apiKey = apiKey.slice(7).trim();
+        }
 
         if (!apiKey) {
             const envKeys = Object.keys(context.env || {});
@@ -261,50 +264,69 @@ export async function onRequestPost(context) {
 </html>
         `;
 
-        // Send request to Resend REST API
-        const resendRes = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${apiKey.trim()}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                from: fromEmail,
-                to: [customerEmail],
-                subject: `🎟️ Your Tickets for ${eventTitle} (Order #${orderId})`,
-                html: htmlEmail
-            })
-        });
-
-        const resendText = await resendRes.text();
-        let resendData = {};
-        try {
-            resendData = resendText ? JSON.parse(resendText) : {};
-        } catch {
-            resendData = { raw: resendText };
+        // Helper to send to Resend REST API
+        async function postToResend(sender) {
+            const res = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'TicketLite/1.0'
+                },
+                body: JSON.stringify({
+                    from: sender,
+                    to: [customerEmail],
+                    subject: `🎟️ Your Tickets for ${eventTitle} (Order #${orderId})`,
+                    html: htmlEmail
+                })
+            });
+            const text = await res.text();
+            let data = {};
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch {
+                data = { raw: text };
+            }
+            return { res, text, data, sender };
         }
 
-        if (!resendRes.ok) {
-            const errorMsg = resendData.message ||
-                (typeof resendData.error === 'string' ? resendData.error : resendData.error?.message) ||
-                resendData.raw ||
-                `Resend HTTP ${resendRes.status}: Failed to send email via Resend.`;
+        // Attempt 1: Custom configured domain/sender
+        let result = await postToResend(fromEmail);
+
+        // Attempt 2: If custom domain is not yet verified in Resend DNS (HTTP 400/403), fallback to onboarding@resend.dev
+        if (!result.res.ok && !fromEmail.includes('onboarding@resend.dev')) {
+            const fallbackResult = await postToResend('Ticket Lite <onboarding@resend.dev>');
+            if (fallbackResult.res.ok) {
+                result = fallbackResult;
+            } else {
+                result.fallbackData = fallbackResult.data;
+            }
+        }
+
+        if (!result.res.ok) {
+            const errorMsg = result.data.message ||
+                (typeof result.data.error === 'string' ? result.data.error : result.data.error?.message) ||
+                result.text ||
+                `Resend HTTP ${result.res.status}: Failed to send email.`;
             return new Response(
                 JSON.stringify({
                     success: false,
-                    resendStatus: resendRes.status,
+                    resendStatus: result.res.status,
                     error: errorMsg,
-                    details: resendData
+                    senderTried: result.sender,
+                    details: result.data,
+                    fallbackDetails: result.fallbackData
                 }),
-                { status: resendRes.status, headers: JSON_HEADERS }
+                { status: result.res.status, headers: JSON_HEADERS }
             );
         }
 
         return new Response(
             JSON.stringify({
                 success: true,
-                id: resendData.id,
-                recipient: customerEmail
+                id: result.data.id,
+                recipient: customerEmail,
+                sender: result.sender
             }),
             { status: 200, headers: JSON_HEADERS }
         );
