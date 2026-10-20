@@ -314,6 +314,9 @@ export async function onRequestPost(context) {
                     resendStatus: result.res.status,
                     error: errorMsg,
                     senderTried: result.sender,
+                    resendHeaders: Object.fromEntries([...result.res.headers.entries()]),
+                    keyPrefix: apiKey ? apiKey.slice(0, 4) : 'none',
+                    keyLength: apiKey ? apiKey.length : 0,
                     details: result.data,
                     fallbackDetails: result.fallbackData
                 }),
