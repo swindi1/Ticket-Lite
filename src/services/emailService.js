@@ -13,7 +13,7 @@ export const emailService = {
             return { success: false, error: 'No customer email provided.' };
         }
 
-        const siteOrigin = origin || (typeof window !== 'undefined' ? window.location.origin : 'https://vtix.pages.dev');
+        const siteOrigin = origin || (typeof window !== 'undefined' ? window.location.origin : 'https://ticketlite.ca');
         const ticketUrl = `${siteOrigin}/tickets/${order.orderId}`;
 
         const googleCalUrl = getGoogleCalendarUrl({

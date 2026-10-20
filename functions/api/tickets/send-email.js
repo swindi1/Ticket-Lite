@@ -62,8 +62,8 @@ export async function onRequestPost(context) {
             );
         }
 
-        // From email: custom domain if defined in Cloudflare env, otherwise Resend default sandbox
-        const fromEmail = context.env?.RESEND_FROM_EMAIL || 'Ticket Lite <onboarding@resend.dev>';
+        // From email: custom domain if defined in Cloudflare env, otherwise defaults to verified donotreply@ticketlite.ca
+        const fromEmail = context.env?.RESEND_FROM_EMAIL || 'Ticket Lite <donotreply@ticketlite.ca>';
 
         // Build itemized table rows
         const itemsRows = items.map(item => `
@@ -95,7 +95,7 @@ export async function onRequestPost(context) {
             </tr>
         ` : '';
 
-        const finalTicketUrl = ticketUrl || 'https://vtix.pages.dev/portal';
+        const finalTicketUrl = ticketUrl || 'https://ticketlite.ca/portal';
 
         const htmlEmail = `
 <!DOCTYPE html>

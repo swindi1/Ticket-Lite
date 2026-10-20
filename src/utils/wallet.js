@@ -3,7 +3,7 @@
  */
 
 export function generateApplePassData({ order, ticket, event }) {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vtix.pages.dev';
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ticketlite.ca';
     const ticketId = ticket?.ticketId || `${order.orderId}-01`;
     const checkinUrl = `${origin}/tickets/${order.orderId}?ticketId=${ticketId}&checkin=1`;
     const shareUrl = `${origin}/tickets/${order.orderId}?ticketId=${ticketId}`;
@@ -88,7 +88,7 @@ export function generateApplePassData({ order, ticket, event }) {
 }
 
 export function generateGoogleWalletPassData({ order, ticket, event }) {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://vtix.pages.dev';
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ticketlite.ca';
     const ticketId = ticket?.ticketId || `${order.orderId}-01`;
     const checkinUrl = `${origin}/tickets/${order.orderId}?ticketId=${ticketId}&checkin=1`;
 
