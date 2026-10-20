@@ -293,7 +293,8 @@ export async function onRequestPost(context) {
                 JSON.stringify({
                     success: false,
                     resendStatus: resendRes.status,
-                    error: errorMsg
+                    error: errorMsg,
+                    details: resendData
                 }),
                 { status: resendRes.status, headers: JSON_HEADERS }
             );
