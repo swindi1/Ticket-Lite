@@ -276,13 +276,24 @@ export async function onRequestPost(context) {
             })
         });
 
-        const resendData = await resendRes.json();
+        const resendText = await resendRes.text();
+        let resendData = {};
+        try {
+            resendData = resendText ? JSON.parse(resendText) : {};
+        } catch {
+            resendData = { raw: resendText };
+        }
 
         if (!resendRes.ok) {
+            const errorMsg = resendData.message ||
+                (typeof resendData.error === 'string' ? resendData.error : resendData.error?.message) ||
+                resendData.raw ||
+                `Resend HTTP ${resendRes.status}: Failed to send email via Resend.`;
             return new Response(
                 JSON.stringify({
                     success: false,
-                    error: resendData.message || resendData.error || 'Failed to send email via Resend.'
+                    resendStatus: resendRes.status,
+                    error: errorMsg
                 }),
                 { status: resendRes.status, headers: JSON_HEADERS }
             );
