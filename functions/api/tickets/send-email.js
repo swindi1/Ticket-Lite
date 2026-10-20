@@ -32,12 +32,19 @@ export async function onRequest(context) {
 
 export async function onRequestPost(context) {
     try {
-        const apiKey = context.env?.RESEND_API_KEY;
+        const rawApiKey = context.env?.RESEND_API_KEY ||
+            context.env?.resend_api_key ||
+            context.env?.RESEND_KEY ||
+            context.env?.resend_key ||
+            context.env?.RESEND;
+        const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : null;
+
         if (!apiKey) {
+            const availableKeys = Object.keys(context.env || {}).filter(k => k !== 'ASSETS');
             return new Response(
                 JSON.stringify({
                     success: false,
-                    error: 'RESEND_API_KEY environment variable is not configured in Cloudflare Pages.'
+                    error: `RESEND_API_KEY not found. Available variables: [${availableKeys.join(', ')}]. Please verify variable name and trigger a redeployment in Cloudflare.`
                 }),
                 { status: 503, headers: JSON_HEADERS }
             );
