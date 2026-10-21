@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useEventData } from '../hooks/useEventData';
 import { useTheme } from '../hooks/useTheme'; // Optional fallback for visual only
 import { useAuth } from '../hooks/useAuth';
+import EventSalesReportModal from '../components/EventSalesReportModal';
 
 const DEFAULT_TICKETS = [
     { id: 'default-t1', name: 'General Admission', price: '45', quantity: '500', note: 'Standard entry with full access to festival grounds and stages.', onSaleDate: '', timezone: 'UTC' },
@@ -17,7 +18,8 @@ export default function PromoterDashboard() {
     const { themeColors, setThemeColors } = useTheme();
     const { currentPromoter } = useAuth();
 
-    const [activeTab, setActiveTab] = useState('events'); // 'events' | 'orders'
+    const [activeTab, setActiveTab] = useState('events'); // 'events' | 'orders' | 'reports'
+    const [reportingEvent, setReportingEvent] = useState(null);
     const [copiedOrderId, setCopiedOrderId] = useState(null);
     const [isCreating, setIsCreating] = useState(false);
     const [editingEventId, setEditingEventId] = useState(null);
@@ -269,7 +271,7 @@ export default function PromoterDashboard() {
             </div>
 
             {/* View Switcher Tabs */}
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
                 <button
                     type="button"
                     onClick={() => setActiveTab('events')}
@@ -285,6 +287,25 @@ export default function PromoterDashboard() {
                     }}
                 >
                     Events ({events.length})
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('reports')}
+                    style={{
+                        padding: '10px 20px',
+                        borderRadius: '24px',
+                        border: '1px solid ' + (activeTab === 'reports' ? '#10b981' : 'rgba(255,255,255,0.1)'),
+                        background: activeTab === 'reports' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255,255,255,0.03)',
+                        color: activeTab === 'reports' ? '#10b981' : 'var(--text-muted)',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                    }}
+                >
+                    <span>📊</span> Sales Reports ({events.length})
                 </button>
                 <button
                     type="button"
@@ -612,6 +633,29 @@ export default function PromoterDashboard() {
                                     </div>
                                     <div>
                                         <button
+                                            className="btn"
+                                            style={{
+                                                padding: '8px 24px',
+                                                fontSize: '0.9rem',
+                                                marginBottom: '8px',
+                                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                                color: '#fff',
+                                                border: '1px solid rgba(16, 185, 129, 0.4)',
+                                                borderRadius: '30px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: '6px',
+                                                width: '100%',
+                                                whiteSpace: 'nowrap',
+                                                fontWeight: 600,
+                                                cursor: 'pointer'
+                                            }}
+                                            onClick={() => setReportingEvent(event)}
+                                        >
+                                            <span>📊</span> Sales Report
+                                        </button>
+                                        <button
                                             className="btn btn-primary"
                                             style={{ padding: '8px 24px', fontSize: '0.9rem', marginBottom: '8px', display: 'block', width: '100%', whiteSpace: 'nowrap' }}
                                             onClick={() => window.open(`/event/${event.id}`, '_blank')}
@@ -635,6 +679,135 @@ export default function PromoterDashboard() {
                                     </div>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                </div>
+            ) : activeTab === 'reports' ? (
+                <div className="glass-panel">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                        <div>
+                            <h2 style={{ margin: 0, color: '#10b981', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>📊</span> Event Sales & Financial Projections
+                            </h2>
+                            <p style={{ color: 'var(--text-muted)', margin: '4px 0 0', fontSize: '0.9rem' }}>
+                                Individual event reports separated by ticket tier & price, with fees and net payouts tallied.
+                            </p>
+                        </div>
+                    </div>
+
+                    {events.length === 0 ? (
+                        <p style={{ color: 'var(--text-muted)' }}>No events created yet.</p>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            {events.map((event) => {
+                                const eventOrders = (orders || []).filter(o => {
+                                    if (o.eventId && event.id) return String(o.eventId) === String(event.id);
+                                    return o.eventTitle === event.title;
+                                });
+                                const totalCapacity = (event.tickets || []).reduce((s, t) => s + (parseInt(t.quantity) || 0), 0);
+                                const totalSold = eventOrders.reduce((s, o) => s + (o.items || []).reduce((is, i) => is + (i.quantity || 0), 0), 0);
+                                const selloutPercent = totalCapacity > 0 ? Math.min(100, Math.round((totalSold / totalCapacity) * 100)) : 0;
+                                const grossTicketRevenue = eventOrders.reduce((s, o) => s + (o.baseTotal || (o.items || []).reduce((is, i) => is + (i.price * i.quantity), 0)), 0);
+                                const feesCollected = eventOrders.reduce((s, o) => s + (o.fees || []).reduce((fs, f) => fs + (parseFloat(f.amount) || 0), 0), 0);
+                                const estProcessing = eventOrders.reduce((s, o) => s + ((o.total || 0) * 0.029 + 0.30), 0);
+                                const netPromoterPayout = Math.max(0, grossTicketRevenue + feesCollected - estProcessing);
+
+                                return (
+                                    <div
+                                        key={event.id}
+                                        style={{
+                                            padding: '24px',
+                                            background: 'rgba(255,255,255,0.02)',
+                                            borderRadius: '16px',
+                                            border: '1px solid rgba(255,255,255,0.07)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '16px'
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                                            <div style={{ flex: 1, minWidth: '240px' }}>
+                                                <h3 style={{ margin: '0 0 6px', fontSize: '1.3rem', color: '#fff' }}>{event.title}</h3>
+                                                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
+                                                    📅 {event.date ? (isNaN(new Date(event.date)) ? event.date : new Date(event.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })) : 'TBA'}
+                                                    {event.location ? ` • 📍 ${event.location}` : ''}
+                                                </p>
+                                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                                                    {(event.tickets || []).map((t, idx) => (
+                                                        <span key={idx} style={{ fontSize: '0.75rem', padding: '3px 10px', borderRadius: '12px', background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                                                            {t.name}: ${Number(t.price).toFixed(2)} ({t.quantity} cap)
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => setReportingEvent(event)}
+                                                className="btn"
+                                                style={{
+                                                    padding: '10px 22px',
+                                                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                                    color: '#fff',
+                                                    border: '1px solid rgba(16, 185, 129, 0.4)',
+                                                    borderRadius: '24px',
+                                                    fontSize: '0.9rem',
+                                                    fontWeight: 700,
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                <span>📊</span> View Detailed Report
+                                            </button>
+                                        </div>
+
+                                        {/* Quick Metric Tiles for this event */}
+                                        <div style={{
+                                            display: 'grid',
+                                            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                                            gap: '12px',
+                                            background: 'rgba(0,0,0,0.2)',
+                                            padding: '16px',
+                                            borderRadius: '12px',
+                                            border: '1px solid rgba(255,255,255,0.04)'
+                                        }}>
+                                            <div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Sold / Capacity</div>
+                                                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', marginTop: '2px' }}>
+                                                    {totalSold} <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>/ {totalCapacity}</span>
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', marginTop: '2px' }}>{selloutPercent}% sellout</div>
+                                            </div>
+
+                                            <div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Gross Ticket Sales</div>
+                                                <div className="gradient-text" style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '2px' }}>
+                                                    ${grossTicketRevenue.toFixed(2)}
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>Across {eventOrders.length} orders</div>
+                                            </div>
+
+                                            <div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Fees Collected</div>
+                                                <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#38bdf8', marginTop: '2px' }}>
+                                                    ${feesCollected.toFixed(2)}
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>From order fees</div>
+                                            </div>
+
+                                            <div>
+                                                <div style={{ fontSize: '0.75rem', color: '#10b981', textTransform: 'uppercase', fontWeight: 700 }}>Net to Promoter</div>
+                                                <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#10b981', marginTop: '2px' }}>
+                                                    ${netPromoterPayout.toFixed(2)}
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>Net payout tally</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
@@ -756,6 +929,15 @@ export default function PromoterDashboard() {
                     )}
                 </div>
             )}
+
+            {/* Event Sales Reporting & Projections Modal */}
+            <EventSalesReportModal
+                isOpen={!!reportingEvent}
+                onClose={() => setReportingEvent(null)}
+                event={reportingEvent}
+                orders={orders}
+                promoter={currentPromoter}
+            />
         </div>
     );
 }

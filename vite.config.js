@@ -71,6 +71,50 @@ function localApiDevPlugin() {
                         return;
                     }
                 }
+
+                if (req.url && req.url.startsWith('/api/stripe/create-checkout-session')) {
+                    if (req.method === 'OPTIONS') {
+                        res.statusCode = 204;
+                        res.setHeader('Access-Control-Allow-Origin', '*');
+                        res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+                        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+                        return res.end();
+                    }
+                    if (req.method === 'POST') {
+                        let body = '';
+                        req.on('data', chunk => {
+                            body += chunk;
+                        });
+                        req.on('end', async () => {
+                            try {
+                                const parsed = JSON.parse(body || '{}');
+                                res.statusCode = 200;
+                                res.setHeader('Content-Type', 'application/json');
+                                return res.end(
+                                    JSON.stringify({
+                                        success: true,
+                                        mode: 'mock',
+                                        orderId: parsed.orderId,
+                                        message: 'Local Vite dev mode: simulated Stripe checkout completed.'
+                                    })
+                                );
+                            } catch (e) {
+                                res.statusCode = 400;
+                                res.setHeader('Content-Type', 'application/json');
+                                return res.end(JSON.stringify({ success: false, error: e.message }));
+                            }
+                        });
+                        return;
+                    }
+                }
+
+                if (req.url && req.url.startsWith('/api/stripe/webhook')) {
+                    if (req.method === 'GET' || req.method === 'POST') {
+                        res.statusCode = 200;
+                        res.setHeader('Content-Type', 'application/json');
+                        return res.end(JSON.stringify({ received: true, mode: 'local_dev' }));
+                    }
+                }
                 next();
             });
         }

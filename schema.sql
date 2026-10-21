@@ -48,12 +48,29 @@ CREATE TABLE IF NOT EXISTS orders (
     base_total REAL NOT NULL,
     fees_json TEXT,
     total_amount REAL NOT NULL,
+    stripe_session_id TEXT,
+    stripe_payment_intent_id TEXT,
+    payment_status TEXT DEFAULT 'paid',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_event_id ON orders(event_id);
 CREATE INDEX IF NOT EXISTS idx_orders_customer_email ON orders(customer_email);
+CREATE INDEX IF NOT EXISTS idx_orders_stripe_session ON orders(stripe_session_id);
+
+-- Stripe Webhook Events Log
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    event_id TEXT NOT NULL UNIQUE,
+    stripe_session_id TEXT,
+    order_id TEXT,
+    payload_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_stripe_webhooks_order_id ON stripe_webhook_events(order_id);
 
 -- Individual Scannable Tickets Table
 CREATE TABLE IF NOT EXISTS tickets (
