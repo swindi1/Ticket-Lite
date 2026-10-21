@@ -128,15 +128,22 @@ export default function EventPage() {
                 cancelUrl: `${origin}/event/${event.id}?payment=cancelled`
             });
 
+            // If server rejected checkout (rate limiting, validation, tampered input), halt and alert
+            if (!stripeRes.success) {
+                setIsCheckingOut(false);
+                alert(stripeRes.error || 'Unable to proceed with checkout. Please verify your order details.');
+                return;
+            }
+
             // If live Stripe Checkout session was returned, redirect buyer to Stripe
-            if (stripeRes.success && stripeRes.url && stripeRes.mode === 'live') {
+            if (stripeRes.url && stripeRes.mode === 'live') {
                 sessionStorage.setItem(`pending_order_${orderId}`, JSON.stringify(orderRecord));
                 recordOrder(orderRecord);
                 window.location.assign(stripeRes.url);
                 return;
             }
 
-            // Fallback instant confirmation (e.g. mock test mode or before live keys are set)
+            // Fallback instant confirmation in test/mock mode
             const savedOrder = recordOrder(orderRecord);
             setLastOrder(savedOrder);
             setIsCheckingOut(false);
@@ -153,13 +160,8 @@ export default function EventPage() {
             }
         } catch (err) {
             console.error('Checkout processing error:', err);
-            // Fallback graceful order recording
-            const savedOrder = recordOrder(orderRecord);
-            setLastOrder(savedOrder);
             setIsCheckingOut(false);
-            setSuccess(true);
-            clearCart();
-            emailService.sendTicketConfirmationEmail(savedOrder, event);
+            alert('A network error occurred while connecting to the payment gateway. Please try again.');
         }
     };
 

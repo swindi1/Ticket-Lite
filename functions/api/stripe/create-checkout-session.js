@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
+import { getSecurityHeaders, checkRateLimit, validateCheckoutPayload, isValidRedirectUrl } from '../../_shared/security.js';
 
 export async function onRequestOptions(context) {
     return new Response(null, {
@@ -25,11 +25,11 @@ export async function onRequestPost(context) {
     const headers = getSecurityHeaders(context.request);
 
     try {
-        // Rate limiting: 20 checkout attempts per 5 minutes per IP
+        // 1. IP Rate Limiting: 20 checkout attempts per 5 minutes per IP
         const clientIp = context.request.headers.get('CF-Connecting-IP') ||
             context.request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
             '127.0.0.1';
-        const rateCheck = checkRateLimit(`stripe-checkout:${clientIp}`, 20, 5 * 60 * 1000);
+        const rateCheck = checkRateLimit(`stripe-checkout-ip:${clientIp}`, 20, 5 * 60 * 1000);
         if (!rateCheck.allowed) {
             return new Response(
                 JSON.stringify({
@@ -66,10 +66,27 @@ export async function onRequestPost(context) {
             cancelUrl
         } = body;
 
-        if (!orderId || !eventId || !customer?.email || items.length === 0) {
+        // 2. Comprehensive Security Validation (Anti-Price-Tampering, Anti-Negative-Charges, Anti-Bot-Flooding)
+        const validation = validateCheckoutPayload({ orderId, eventId, customer, items, fees });
+        if (!validation.isValid) {
             return new Response(
-                JSON.stringify({ success: false, error: 'Missing required order details (orderId, eventId, customer, items).' }),
+                JSON.stringify({ success: false, error: validation.error }),
                 { status: 400, headers }
+            );
+        }
+
+        // 3. Customer Email Rate Limiting (Prevents Card Testing Bot Probing against single emails)
+        const emailRateCheck = checkRateLimit(`stripe-checkout-email:${customer.email.trim().toLowerCase()}`, 6, 5 * 60 * 1000);
+        if (!emailRateCheck.allowed) {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: `Too many checkout requests for this email address. Please wait ${emailRateCheck.resetSeconds} seconds.`
+                }),
+                {
+                    status: 429,
+                    headers: { ...headers, 'Retry-After': String(emailRateCheck.resetSeconds) }
+                }
             );
         }
 
@@ -80,6 +97,17 @@ export async function onRequestPost(context) {
         const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim().replace(/^["']|["']$/g, '') : null;
 
         const origin = context.request.headers.get('Origin') || 'https://ticketlite.ca';
+
+        // 4. Open Redirect Prevention: Validate success and cancel URLs against allowed platform domains
+        let safeSuccessUrl = `${origin}/event/${encodeURIComponent(eventId)}?session_id={CHECKOUT_SESSION_ID}&order_id=${encodeURIComponent(orderId)}&payment=success`;
+        let safeCancelUrl = `${origin}/event/${encodeURIComponent(eventId)}?payment=cancelled`;
+
+        if (successUrl && isValidRedirectUrl(successUrl)) {
+            safeSuccessUrl = successUrl;
+        }
+        if (cancelUrl && isValidRedirectUrl(cancelUrl)) {
+            safeCancelUrl = cancelUrl;
+        }
 
         // Fallback / mock simulation if Stripe secret key is not set yet in Cloudflare
         if (!apiKey) {
@@ -95,26 +123,26 @@ export async function onRequestPost(context) {
             );
         }
 
-        // Initialize Stripe with Cloudflare Workers fetch client
+        // 5. Initialize Stripe with Cloudflare Workers fetch client
         const stripe = new Stripe(apiKey, {
             httpClient: Stripe.createFetchHttpClient(),
             apiVersion: '2025-02-24.acacia'
         });
 
-        // Build Stripe line items
+        // 6. Build strictly validated Stripe line items
         const lineItems = items.map(item => ({
             price_data: {
                 currency: 'usd',
                 product_data: {
-                    name: `${eventTitle || 'Event Ticket'} - ${item.name}`,
-                    description: item.note ? String(item.note).slice(0, 500) : undefined
+                    name: `${String(eventTitle || 'Event Ticket').slice(0, 80)} - ${String(item.name).slice(0, 50)}`,
+                    description: item.note ? String(item.note).slice(0, 300) : undefined
                 },
                 unit_amount: Math.round(Number(item.price) * 100)
             },
-            quantity: Math.max(1, parseInt(item.quantity) || 1)
+            quantity: Math.max(1, parseInt(item.quantity, 10) || 1)
         }));
 
-        // Add fee line items if applicable
+        // Add fee line items if applicable (strictly non-negative)
         if (Array.isArray(fees)) {
             fees.forEach(fee => {
                 const amountCents = Math.round(Number(fee.amount) * 100);
@@ -123,7 +151,7 @@ export async function onRequestPost(context) {
                         price_data: {
                             currency: 'usd',
                             product_data: {
-                                name: fee.name || 'Service & Processing Fee'
+                                name: String(fee.name || 'Service & Processing Fee').slice(0, 60)
                             },
                             unit_amount: amountCents
                         },
@@ -132,9 +160,6 @@ export async function onRequestPost(context) {
                 }
             });
         }
-
-        const safeSuccessUrl = successUrl || `${origin}/event/${encodeURIComponent(eventId)}?session_id={CHECKOUT_SESSION_ID}&order_id=${encodeURIComponent(orderId)}&payment=success`;
-        const safeCancelUrl = cancelUrl || `${origin}/event/${encodeURIComponent(eventId)}?payment=cancelled`;
 
         // Create Stripe Checkout Session
         const session = await stripe.checkout.sessions.create({

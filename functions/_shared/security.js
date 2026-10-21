@@ -215,3 +215,120 @@ export function isValidTicketUrl(urlStr) {
         return false;
     }
 }
+
+/**
+ * Validates that a payment return redirect URL (successUrl / cancelUrl) strictly matches trusted platform domains
+ * Prevents Open Redirect / Phishing exploits through Stripe Checkout session return URLs.
+ */
+export function isValidRedirectUrl(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return false;
+    try {
+        const parsed = new URL(urlStr);
+        const allowedHosts = [
+            'ticket-lite.tylerboseroberts.workers.dev',
+            'ticketlite.ca',
+            'www.ticketlite.ca',
+            'localhost',
+            '127.0.0.1'
+        ];
+        const isAllowedHost = allowedHosts.includes(parsed.hostname.toLowerCase());
+        const isHttps = parsed.protocol === 'https:' || (parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'));
+        return isAllowedHost && isHttps;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Strict validator for Stripe checkout payloads
+ * Prevents client-side price tampering, negative charges, inventory overflow, and carding bot spam.
+ */
+export function validateCheckoutPayload({ orderId, eventId, customer, items, fees }) {
+    // 1. Order ID check: strictly 12 digits
+    if (!orderId || typeof orderId !== 'string' || !/^\d{12}$/.test(orderId)) {
+        return { isValid: false, error: 'Invalid order ID format. Must be a 12-digit number.' };
+    }
+
+    // 2. Event ID check: alphanumeric string 1-64 chars
+    if (!eventId || typeof eventId !== 'string' || eventId.trim().length === 0 || eventId.length > 64) {
+        return { isValid: false, error: 'Invalid or missing Event ID.' };
+    }
+
+    // 3. Customer validation
+    if (!customer || typeof customer !== 'object') {
+        return { isValid: false, error: 'Customer information is required.' };
+    }
+
+    const { name, email, phone } = customer;
+    if (!name || typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 100) {
+        return { isValid: false, error: 'Customer name must be between 2 and 100 characters.' };
+    }
+    if (FORBIDDEN_SQL_CHARS_REGEX.test(name) || FORBIDDEN_SQL_KEYWORDS_REGEX.test(name)) {
+        return { isValid: false, error: 'Customer name contains invalid characters.' };
+    }
+
+    if (!email || typeof email !== 'string') {
+        return { isValid: false, error: 'Valid customer email is required.' };
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(cleanEmail) || cleanEmail.length > 100 || FORBIDDEN_SQL_CHARS_REGEX.test(cleanEmail)) {
+        return { isValid: false, error: 'Customer email format is invalid or contains prohibited symbols.' };
+    }
+
+    if (phone && (typeof phone !== 'string' || !/^[\d\s()+-]{7,25}$/.test(phone.trim()))) {
+        return { isValid: false, error: 'Customer phone number format is invalid.' };
+    }
+
+    // 4. Ticket Items Validation (Prevents Price Tampering & Zero/Negative Charges)
+    if (!Array.isArray(items) || items.length === 0) {
+        return { isValid: false, error: 'Order must contain at least one ticket item.' };
+    }
+    if (items.length > 50) {
+        return { isValid: false, error: 'Exceeded maximum allowable ticket lines in a single order (50).' };
+    }
+
+    let subtotal = 0;
+    for (const item of items) {
+        if (!item || typeof item !== 'object') {
+            return { isValid: false, error: 'Invalid ticket item format.' };
+        }
+
+        const itemName = String(item.name || '').trim();
+        if (!itemName || itemName.length > 100) {
+            return { isValid: false, error: 'Ticket item name is required and cannot exceed 100 characters.' };
+        }
+        if (FORBIDDEN_SQL_CHARS_REGEX.test(itemName)) {
+            return { isValid: false, error: 'Ticket item name contains invalid characters.' };
+        }
+
+        const price = Number(item.price);
+        // Minimum Stripe charge is $0.50 USD; prevent negative or $0.00 tampering
+        if (isNaN(price) || price < 0.50 || price > 10000.00) {
+            return { isValid: false, error: `Invalid ticket price for "${itemName}". Price must be between $0.50 and $10,000.00.` };
+        }
+
+        const qty = parseInt(item.quantity, 10);
+        if (isNaN(qty) || qty < 1 || qty > 25) {
+            return { isValid: false, error: `Invalid quantity for "${itemName}". Quantity must be between 1 and 25 per order.` };
+        }
+
+        subtotal += price * qty;
+    }
+
+    // 5. Fee Structure Validation
+    if (fees && Array.isArray(fees)) {
+        if (fees.length > 10) {
+            return { isValid: false, error: 'Exceeded maximum allowable fee entries (10).' };
+        }
+        for (const fee of fees) {
+            const feeAmount = Number(fee.amount);
+            if (isNaN(feeAmount) || feeAmount < 0 || feeAmount > 500.00) {
+                return { isValid: false, error: 'Invalid fee amount. Fees cannot be negative or exceed $500.00.' };
+            }
+        }
+    }
+
+    return { isValid: true, error: null, subtotal };
+}
+

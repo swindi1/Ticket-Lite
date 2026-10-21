@@ -1,6 +1,31 @@
 import Stripe from 'stripe';
 import { getSecurityHeaders } from '../../_shared/security.js';
 
+// Idempotency tracking map: event.id -> timestamp (prevents replay attacks and duplicate ticket processing)
+const processedEventIds = new Map();
+
+function isDuplicateEvent(eventId) {
+    if (!eventId) return false;
+    const now = Date.now();
+    const twoHoursMs = 2 * 60 * 60 * 1000;
+
+    // Prune stale entries
+    if (processedEventIds.size > 2000) {
+        for (const [id, ts] of processedEventIds.entries()) {
+            if (now - ts > twoHoursMs) {
+                processedEventIds.delete(id);
+            }
+        }
+    }
+
+    if (processedEventIds.has(eventId)) {
+        return true;
+    }
+
+    processedEventIds.set(eventId, now);
+    return false;
+}
+
 export async function onRequestOptions(context) {
     return new Response(null, {
         status: 204,
@@ -10,11 +35,15 @@ export async function onRequestOptions(context) {
 
 export async function onRequestGet(context) {
     const headers = getSecurityHeaders(context.request);
+    const hasSecret = !!(context.env?.STRIPE_WEBHOOK_SECRET || context.env?.stripe_webhook_secret);
+
     return new Response(
         JSON.stringify({
             status: 'active',
             service: 'Ticket Lite Stripe Webhook Handler',
             webhookEndpoint: '/api/stripe/webhook',
+            signatureVerificationEnforced: true,
+            secretConfigured: hasSecret,
             supportedEvents: ['checkout.session.completed', 'payment_intent.succeeded']
         }),
         { status: 200, headers }
@@ -55,43 +84,58 @@ export async function onRequestPost(context) {
         const signature = context.request.headers.get('stripe-signature');
         const rawBody = await context.request.text();
 
-        let event;
-
-        if (apiKey && webhookSecret && signature) {
-            const stripe = new Stripe(apiKey, {
-                httpClient: Stripe.createFetchHttpClient(),
-                apiVersion: '2025-02-24.acacia'
-            });
-
-            try {
-                // SubtleCrypto provider required for Cloudflare Workers / workerd runtime
-                event = await stripe.webhooks.constructEventAsync(
-                    rawBody,
-                    signature,
-                    webhookSecret,
-                    undefined,
-                    Stripe.createSubtleCryptoProvider()
-                );
-            } catch (err) {
-                console.error('Stripe webhook signature verification failed:', err.message);
-                return new Response(
-                    JSON.stringify({ error: `Webhook signature verification failed: ${err.message}` }),
-                    { status: 400, headers }
-                );
-            }
-        } else {
-            // Unverified test mode (e.g. testing endpoint before webhook secret is configured)
-            try {
-                event = JSON.parse(rawBody || '{}');
-            } catch {
-                return new Response(
-                    JSON.stringify({ error: 'Invalid JSON payload' }),
-                    { status: 400, headers }
-                );
-            }
+        // Security Defense 1: Strictly reject unsigned payloads if secret or key is configured
+        if (!webhookSecret) {
+            return new Response(
+                JSON.stringify({
+                    error: 'STRIPE_WEBHOOK_SECRET not configured. Unsigned webhook processing is disabled to prevent forged transaction exploits.',
+                    instructions: 'Configure STRIPE_WEBHOOK_SECRET in Cloudflare Dashboard Variables to activate live verified webhooks.'
+                }),
+                { status: 503, headers }
+            );
         }
 
-        // Process webhook events
+        if (!signature) {
+            return new Response(
+                JSON.stringify({ error: 'Missing stripe-signature header. Unauthorized webhook request rejected.' }),
+                { status: 401, headers }
+            );
+        }
+
+        // Security Defense 2: Cryptographic Signature Verification via Web Crypto (SubtleCrypto)
+        const stripe = new Stripe(apiKey || 'sk_dummy_for_verification', {
+            httpClient: Stripe.createFetchHttpClient(),
+            apiVersion: '2025-02-24.acacia'
+        });
+
+        let event;
+        try {
+            // constructEventAsync verifies HMAC-SHA256 signature and validates 300-second timestamp freshness
+            event = await stripe.webhooks.constructEventAsync(
+                rawBody,
+                signature,
+                webhookSecret,
+                undefined,
+                Stripe.createSubtleCryptoProvider()
+            );
+        } catch (err) {
+            console.error('Stripe webhook signature verification failed:', err.message);
+            return new Response(
+                JSON.stringify({ error: `Webhook signature verification failed: ${err.message}` }),
+                { status: 400, headers }
+            );
+        }
+
+        // Security Defense 3: Idempotency Protection (Prevents Replay Attacks)
+        if (isDuplicateEvent(event.id)) {
+            console.warn(`Idempotency notice: Duplicate Stripe webhook event detected: ${event.id}`);
+            return new Response(
+                JSON.stringify({ received: true, duplicate: true, eventId: event.id }),
+                { status: 200, headers }
+            );
+        }
+
+        // Process verified webhook event
         const eventType = event.type || 'unknown';
         let orderId = null;
         let eventId = null;
@@ -103,10 +147,23 @@ export async function onRequestPost(context) {
             orderId = metadata.orderId || session.client_reference_id;
             eventId = metadata.eventId;
 
-            const customerEmail = metadata.customerEmail || session.customer_details?.email || session.customer_email;
+            const rawCustomerEmail = metadata.customerEmail || session.customer_details?.email || session.customer_email;
+            const customerEmail = typeof rawCustomerEmail === 'string' ? rawCustomerEmail.trim().toLowerCase() : '';
             const customerName = metadata.customerName || session.customer_details?.name || 'Valued Customer';
             const eventTitle = metadata.eventTitle || 'Your Event';
             const total = (session.amount_total || 0) / 100;
+
+            // Security Defense 4: Validate Order ID and Email format before executing any downstream ticket generation
+            const isEmailValid = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(customerEmail);
+            const isOrderIdValid = /^\d{12}$/.test(String(orderId || ''));
+
+            if (!isEmailValid || !isOrderIdValid) {
+                console.error(`Invalid session metadata in webhook: orderId=${orderId}, email=${customerEmail}`);
+                return new Response(
+                    JSON.stringify({ error: 'Session metadata missing valid 12-digit orderId or customer email.' }),
+                    { status: 400, headers }
+                );
+            }
 
             let parsedItems = [];
             try {
@@ -126,43 +183,41 @@ export async function onRequestPost(context) {
                 parsedFees = [];
             }
 
-            // If customer email is available, trigger ticket confirmation email via internal endpoint
-            if (customerEmail && orderId) {
-                try {
-                    const origin = new URL(context.request.url).origin;
-                    const ticketUrl = `${origin}/tickets/${encodeURIComponent(orderId)}`;
+            // Secure email dispatch pipeline
+            try {
+                const origin = new URL(context.request.url).origin;
+                const ticketUrl = `${origin}/tickets/${encodeURIComponent(orderId)}`;
 
-                    const resendApiKey = context.env?.RESEND_API_KEY ||
-                        (typeof globalThis !== 'undefined' && globalThis.RESEND_API_KEY);
+                const resendApiKey = context.env?.RESEND_API_KEY ||
+                    (typeof globalThis !== 'undefined' && globalThis.RESEND_API_KEY);
 
-                    if (resendApiKey) {
-                        const emailPayload = {
-                            orderId,
-                            eventTitle,
-                            eventDate: metadata.eventDate || '',
-                            eventLocation: metadata.eventLocation || '',
-                            customerName,
-                            customerEmail,
-                            items: parsedItems,
-                            baseTotal: total - parsedFees.reduce((s, f) => s + (f.amount || 0), 0),
-                            fees: parsedFees,
-                            total,
-                            ticketUrl
-                        };
+                if (resendApiKey) {
+                    const emailPayload = {
+                        orderId,
+                        eventTitle,
+                        eventDate: metadata.eventDate || '',
+                        eventLocation: metadata.eventLocation || '',
+                        customerName,
+                        customerEmail,
+                        items: parsedItems,
+                        baseTotal: total - parsedFees.reduce((s, f) => s + (f.amount || 0), 0),
+                        fees: parsedFees,
+                        total,
+                        ticketUrl
+                    };
 
-                        const emailRes = await fetch(`${origin}/api/tickets/send-email`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(emailPayload)
-                        });
+                    const emailRes = await fetch(`${origin}/api/tickets/send-email`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(emailPayload)
+                    });
 
-                        if (emailRes.ok) {
-                            emailSent = true;
-                        }
+                    if (emailRes.ok) {
+                        emailSent = true;
                     }
-                } catch (emailErr) {
-                    console.warn('Webhook email trigger notice:', emailErr.message);
                 }
+            } catch (emailErr) {
+                console.warn('Webhook email trigger notice:', emailErr.message);
             }
         }
 
