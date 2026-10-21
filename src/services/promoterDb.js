@@ -171,12 +171,12 @@ export const promoterDb = {
         // 3. Fallback: Local database verification with cryptographic verification
         const account = await this.findByEmail(normalizedEmail);
         if (!account) {
-            throw new Error('No promoter account found with this email.');
+            throw new Error('Invalid email or password.');
         }
 
         const isMatch = await verifyPassword(password, account.password_hash);
         if (!isMatch) {
-            throw new Error('Incorrect password. Please try again.');
+            throw new Error('Invalid email or password.');
         }
 
         const { password_hash, ...safePromoter } = account;

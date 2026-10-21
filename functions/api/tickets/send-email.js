@@ -1,37 +1,46 @@
-/**
- * Cloudflare Pages Function: /api/tickets/send-email
- * Sends purchased ticket confirmation and pass links to customers via Resend REST API.
- */
+import { getSecurityHeaders, checkRateLimit, isValidTicketUrl } from '../../_shared/security.js';
 
-const JSON_HEADERS = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
-};
-
-export async function onRequestOptions() {
+export async function onRequestOptions(context) {
     return new Response(null, {
         status: 204,
-        headers: JSON_HEADERS
+        headers: getSecurityHeaders(context?.request)
     });
 }
 
 export async function onRequest(context) {
     if (context.request.method === 'OPTIONS') {
-        return onRequestOptions();
+        return onRequestOptions(context);
     }
     if (context.request.method === 'POST') {
         return onRequestPost(context);
     }
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
         status: 405,
-        headers: JSON_HEADERS
+        headers: getSecurityHeaders(context.request)
     });
 }
 
 export async function onRequestPost(context) {
+    const headers = getSecurityHeaders(context.request);
     try {
+        // 1. IP Rate Limiting: max 5 emails per 5 minutes to prevent spam relay abuse
+        const clientIp = context.request.headers.get('CF-Connecting-IP') ||
+            context.request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+            '127.0.0.1';
+        const rateCheck = checkRateLimit(`email:${clientIp}`, 5, 5 * 60 * 1000);
+        if (!rateCheck.allowed) {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: `Too many email delivery requests. Please wait ${rateCheck.resetSeconds} seconds before trying again.`
+                }),
+                {
+                    status: 429,
+                    headers: { ...headers, 'Retry-After': String(rateCheck.resetSeconds) }
+                }
+            );
+        }
+
         const rawApiKey = context.env?.RESEND_API_KEY ||
             context.env?.resend_api_key ||
             context.env?.RESEND_KEY ||
@@ -54,7 +63,7 @@ export async function onRequestPost(context) {
                     success: false,
                     error: `RESEND_API_KEY not found. Available variables: [${availableKeys.join(', ')}]. Please verify variable name and trigger a redeployment in Cloudflare.`
                 }),
-                { status: 503, headers: JSON_HEADERS }
+                { status: 503, headers }
             );
         }
 
@@ -64,7 +73,7 @@ export async function onRequestPost(context) {
         } catch {
             return new Response(
                 JSON.stringify({ success: false, error: 'Invalid JSON request body.' }),
-                { status: 400, headers: JSON_HEADERS }
+                { status: 400, headers }
             );
         }
 
@@ -83,11 +92,34 @@ export async function onRequestPost(context) {
             googleCalendarUrl
         } = body;
 
-        if (!customerEmail || !orderId || !eventTitle) {
+        const emailClean = (customerEmail || '').trim().toLowerCase();
+        const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!emailClean || !emailRegex.test(emailClean) || !orderId || !eventTitle) {
             return new Response(
-                JSON.stringify({ success: false, error: 'Missing required order details.' }),
-                { status: 400, headers: JSON_HEADERS }
+                JSON.stringify({ success: false, error: 'Missing or invalid order details.' }),
+                { status: 400, headers }
             );
+        }
+
+        // Validate and sanitize ticketUrl: only allow trusted domains to prevent open redirects/phishing
+        let finalTicketUrl = 'https://ticketlite.ca/portal';
+        if (ticketUrl && isValidTicketUrl(ticketUrl)) {
+            finalTicketUrl = ticketUrl;
+        } else if (orderId) {
+            finalTicketUrl = `https://ticket-lite.tylerboseroberts.workers.dev/tickets/${encodeURIComponent(orderId)}`;
+        }
+
+        // Validate Google Calendar URL
+        let safeCalendarUrl = '';
+        if (googleCalendarUrl && typeof googleCalendarUrl === 'string') {
+            try {
+                const parsedCal = new URL(googleCalendarUrl);
+                if (parsedCal.protocol === 'https:' && parsedCal.hostname === 'calendar.google.com') {
+                    safeCalendarUrl = googleCalendarUrl;
+                }
+            } catch {
+                safeCalendarUrl = '';
+            }
         }
 
         // From email: custom domain if defined in Cloudflare env, otherwise defaults to verified donotreply@ticketlite.ca
@@ -122,8 +154,6 @@ export async function onRequestPost(context) {
                 <td style="padding: 10px 0 6px; text-align: right; color: #ffffff; font-size: 13px; border-top: 1px solid rgba(255,255,255,0.06);">$${Number(baseTotal).toFixed(2)}</td>
             </tr>
         ` : '';
-
-        const finalTicketUrl = ticketUrl || 'https://ticketlite.ca/portal';
 
         const htmlEmail = `
 <!DOCTYPE html>
@@ -176,7 +206,7 @@ export async function onRequestPost(context) {
                     <!-- Primary CTA Button: Access Tickets -->
                     <tr>
                         <td style="padding: 0 32px 28px; text-align: center;">
-                            <a href="${finalTicketUrl}" style="display: block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #d946ef 100%); color: #ffffff; text-decoration: none; padding: 16px 28px; border-radius: 10px; font-weight: 700; font-size: 16px; letter-spacing: 0.3px; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);">
+                            <a href="${escapeHtml(finalTicketUrl)}" style="display: block; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #d946ef 100%); color: #ffffff; text-decoration: none; padding: 16px 28px; border-radius: 10px; font-weight: 700; font-size: 16px; letter-spacing: 0.3px; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);">
                                 📱 View & Access Digital Tickets & QR Codes
                             </a>
                             <div style="font-size: 12px; color: #64748b; margin-top: 10px;">
@@ -212,11 +242,11 @@ export async function onRequestPost(context) {
                         </td>
                     </tr>
 
-                    ${googleCalendarUrl ? `
+                    ${safeCalendarUrl ? `
                     <!-- 1-Tap Calendar Link -->
                     <tr>
                         <td style="padding: 0 32px 24px; text-align: center;">
-                            <a href="${googleCalendarUrl}" style="display: inline-block; background-color: #1e293b; color: #38bdf8; border: 1px solid #334155; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600;">
+                            <a href="${escapeHtml(safeCalendarUrl)}" style="display: inline-block; background-color: #1e293b; color: #38bdf8; border: 1px solid #334155; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600;">
                                 📅 Add Event to Google Calendar
                             </a>
                         </td>
@@ -317,7 +347,7 @@ export async function onRequestPost(context) {
                     details: result.data,
                     fallbackDetails: result.fallbackData
                 }),
-                { status: result.res.status, headers: JSON_HEADERS }
+                { status: result.res.status, headers }
             );
         }
 
@@ -328,7 +358,7 @@ export async function onRequestPost(context) {
                 recipient: customerEmail,
                 sender: result.sender
             }),
-            { status: 200, headers: JSON_HEADERS }
+            { status: 200, headers }
         );
     } catch (err) {
         return new Response(
@@ -336,7 +366,7 @@ export async function onRequestPost(context) {
                 success: false,
                 error: err.message || 'Internal server error while sending email.'
             }),
-            { status: 500, headers: JSON_HEADERS }
+            { status: 500, headers }
         );
     }
 }

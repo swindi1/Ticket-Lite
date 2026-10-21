@@ -141,3 +141,77 @@ export async function verifyPassword(password, storedHash) {
 
     return password === storedHash;
 }
+
+export function getSecurityHeaders(request) {
+    const origin = request?.headers?.get('Origin') || '';
+    const allowedOrigins = [
+        'https://ticket-lite.tylerboseroberts.workers.dev',
+        'https://ticketlite.ca',
+        'https://www.ticketlite.ca'
+    ];
+    const isDev = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+    const allowOrigin = (allowedOrigins.includes(origin) || isDev) ? origin : 'https://ticketlite.ca';
+
+    return {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': allowOrigin,
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'strict-origin-when-cross-origin'
+    };
+}
+
+const rateLimitBuckets = new Map();
+
+/**
+ * In-memory sliding window rate limiter per client IP / key
+ */
+export function checkRateLimit(key, maxRequests = 10, windowMs = 60000) {
+    const now = Date.now();
+    const bucket = rateLimitBuckets.get(key) || [];
+    const valid = bucket.filter(ts => now - ts < windowMs);
+
+    if (valid.length >= maxRequests) {
+        const oldest = valid[0];
+        const resetSeconds = Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+        return { allowed: false, remaining: 0, resetSeconds };
+    }
+
+    valid.push(now);
+    rateLimitBuckets.set(key, valid);
+
+    // Garbage collect stale keys if map exceeds 2,000 entries
+    if (rateLimitBuckets.size > 2000) {
+        for (const [k, v] of rateLimitBuckets.entries()) {
+            if (v.every(ts => now - ts >= windowMs)) {
+                rateLimitBuckets.delete(k);
+            }
+        }
+    }
+
+    return { allowed: true, remaining: maxRequests - valid.length, resetSeconds: Math.ceil(windowMs / 1000) };
+}
+
+/**
+ * Validates that a ticket redirect URL strictly matches trusted platform domains
+ */
+export function isValidTicketUrl(urlStr) {
+    if (!urlStr || typeof urlStr !== 'string') return false;
+    try {
+        const parsed = new URL(urlStr);
+        const allowedHosts = [
+            'ticket-lite.tylerboseroberts.workers.dev',
+            'ticketlite.ca',
+            'www.ticketlite.ca',
+            'localhost',
+            '127.0.0.1'
+        ];
+        return (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+            allowedHosts.includes(parsed.hostname.toLowerCase()) &&
+            parsed.pathname.startsWith('/tickets/');
+    } catch {
+        return false;
+    }
+}

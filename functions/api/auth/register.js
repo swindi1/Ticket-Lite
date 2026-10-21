@@ -1,28 +1,39 @@
-import { validatePromoterRegistration, hashPassword } from '../../_shared/security.js';
+import { validatePromoterRegistration, hashPassword, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
 
-const JSON_HEADERS = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
-};
-
-export async function onRequestOptions() {
+export async function onRequestOptions(context) {
     return new Response(null, {
         status: 204,
-        headers: JSON_HEADERS
+        headers: getSecurityHeaders(context?.request)
     });
 }
 
 export async function onRequestPost(context) {
+    const headers = getSecurityHeaders(context.request);
     try {
+        // Rate limiting: max 3 registrations per 10 minutes per client IP to mitigate automated spam bots
+        const clientIp = context.request.headers.get('CF-Connecting-IP') ||
+            context.request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+            '127.0.0.1';
+        const rateCheck = checkRateLimit(`register:${clientIp}`, 3, 10 * 60 * 1000);
+        if (!rateCheck.allowed) {
+            return new Response(
+                JSON.stringify({
+                    error: `Too many registration attempts. Please wait ${rateCheck.resetSeconds} seconds before trying again.`
+                }),
+                {
+                    status: 429,
+                    headers: { ...headers, 'Retry-After': String(rateCheck.resetSeconds) }
+                }
+            );
+        }
+
         let body;
         try {
             body = await context.request.json();
         } catch {
             return new Response(JSON.stringify({ error: 'Invalid JSON body.' }), {
                 status: 400,
-                headers: JSON_HEADERS
+                headers
             });
         }
 
@@ -33,7 +44,7 @@ export async function onRequestPost(context) {
         if (!validation.isValid) {
             return new Response(JSON.stringify({ error: validation.error }), {
                 status: 400,
-                headers: JSON_HEADERS
+                headers
             });
         }
 
@@ -42,7 +53,7 @@ export async function onRequestPost(context) {
         if (!db) {
             return new Response(
                 JSON.stringify({ error: 'Cloudflare D1 Database binding (DB) is not attached.' }),
-                { status: 503, headers: JSON_HEADERS }
+                { status: 503, headers }
             );
         }
 
@@ -57,7 +68,7 @@ export async function onRequestPost(context) {
         if (existing) {
             return new Response(
                 JSON.stringify({ error: 'An account with this email address already exists.' }),
-                { status: 409, headers: JSON_HEADERS }
+                { status: 409, headers }
             );
         }
 
@@ -94,12 +105,12 @@ export async function onRequestPost(context) {
 
         return new Response(JSON.stringify({ success: true, promoter: promoterAccount }), {
             status: 201,
-            headers: JSON_HEADERS
+            headers
         });
     } catch (err) {
         return new Response(
             JSON.stringify({ error: err.message || 'Internal server error during registration.' }),
-            { status: 500, headers: JSON_HEADERS }
+            { status: 500, headers }
         );
     }
 }
