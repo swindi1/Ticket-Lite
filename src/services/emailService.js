@@ -3,6 +3,7 @@
  */
 
 import { getGoogleCalendarUrl } from '../utils/calendar';
+import { encodePassToken } from '../utils/passToken';
 
 export const emailService = {
     /**
@@ -14,7 +15,16 @@ export const emailService = {
         }
 
         const siteOrigin = origin || (typeof window !== 'undefined' ? window.location.origin : 'https://ticketlite.ca');
-        const ticketUrl = `${siteOrigin}/tickets/${order.orderId}`;
+        const passToken = encodePassToken({
+            ...order,
+            eventTitle: order.eventTitle || event?.title,
+            eventDate: order.eventDate || event?.date,
+            eventLocation: order.eventLocation || event?.location,
+            eventPalette: order.eventPalette || event?.palette
+        });
+        const ticketUrl = passToken
+            ? `${siteOrigin}/tickets/${order.orderId}?pass=${passToken}`
+            : `${siteOrigin}/tickets/${order.orderId}`;
 
         const googleCalUrl = getGoogleCalendarUrl({
             title: order.eventTitle || event?.title,

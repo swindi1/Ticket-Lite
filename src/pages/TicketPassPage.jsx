@@ -4,11 +4,12 @@ import { useEventData } from '../hooks/useEventData';
 import QRCode from 'qrcode';
 import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
 import WalletModal from '../components/WalletModal';
+import { encodePassToken, decodePassToken } from '../utils/passToken';
 
 export default function TicketPassPage() {
     const { orderId } = useParams();
     const [searchParams] = useSearchParams();
-    const { orders, events, checkInTicket } = useEventData();
+    const { orders, events, recordOrder, checkInTicket } = useEventData();
 
     const [selectedTicketIndex, setSelectedTicketIndex] = useState(0);
     const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
@@ -16,9 +17,20 @@ export default function TicketPassPage() {
     const [checkInMessage, setCheckInMessage] = useState('');
     const [walletModalState, setWalletModalState] = useState({ isOpen: false, type: 'apple' });
 
-    // Locate the order
+    // Locate the order in local state
     const order = (orders || []).find(o => o.orderId === orderId);
     const event = order ? (events || []).find(e => e.id === order.eventId) : null;
+
+    // Automatically hydrate the order if opening on a new device (e.g. from confirmation email)
+    useEffect(() => {
+        const passParam = searchParams.get('pass');
+        if (!order && passParam && recordOrder) {
+            const decodedOrder = decodePassToken(passParam);
+            if (decodedOrder && String(decodedOrder.orderId) === String(orderId)) {
+                recordOrder(decodedOrder);
+            }
+        }
+    }, [order, orderId, searchParams, recordOrder]);
 
     // Expand tickets if older order structure was missing them
     const tickets = useMemo(() => {
@@ -59,7 +71,9 @@ export default function TicketPassPage() {
         if (!order || !currentTicket) return;
 
         // The QR code contains a direct verification URL that opens this ticket pass and verifies it
-        const verifyUrl = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket.ticketId}&checkin=1`;
+        const passToken = encodePassToken(order);
+        const passQuery = passToken ? `&pass=${encodeURIComponent(passToken)}` : '';
+        const verifyUrl = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket.ticketId}&checkin=1${passQuery}`;
 
         QRCode.toDataURL(verifyUrl, {
             width: 280,
@@ -78,10 +92,13 @@ export default function TicketPassPage() {
         return (
             <div className="animate-fade-in" style={{ maxWidth: '600px', margin: '80px auto', textAlign: 'center' }}>
                 <div className="glass-panel" style={{ padding: '48px 32px' }}>
-                    <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🔍</div>
-                    <h2 style={{ marginBottom: '12px' }}>Ticket Not Found</h2>
-                    <p style={{ color: 'var(--text-muted)', marginBottom: '28px' }}>
-                        No ticket order matches Order ID: <code style={{ color: 'var(--accent-primary)' }}>{orderId}</code>.
+                    <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🎟️</div>
+                    <h2 style={{ marginBottom: '12px' }}>Accessing Your Ticket</h2>
+                    <p style={{ color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.6' }}>
+                        No local ticket order was found for Order ID: <code style={{ color: 'var(--accent-primary)' }}>{orderId}</code> on this browser.
+                    </p>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '28px', lineHeight: '1.5' }}>
+                        If you received an order confirmation email, please tap the <strong>"View & Access Digital Tickets"</strong> button inside that email to automatically sync your tickets to this device.
                     </p>
                     <Link to="/portal" className="btn btn-primary">
                         Browse Events
@@ -91,11 +108,13 @@ export default function TicketPassPage() {
         );
     }
 
-    const themeColors = event?.palette || { dominant: 'rgb(236, 72, 153)', palette: [] };
+    const themeColors = event?.palette || order?.eventPalette || { dominant: 'rgb(236, 72, 153)', palette: [] };
     const dominantColor = themeColors.dominant || 'var(--accent-primary)';
 
     const handleCopyTicketLink = () => {
-        const url = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket?.ticketId || ''}`;
+        const passToken = encodePassToken(order);
+        const passQuery = passToken ? `&pass=${encodeURIComponent(passToken)}` : '';
+        const url = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket?.ticketId || ''}${passQuery}`;
         navigator.clipboard.writeText(url);
         setCopiedLink(true);
         setTimeout(() => setCopiedLink(false), 2500);

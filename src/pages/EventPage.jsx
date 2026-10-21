@@ -67,6 +67,9 @@ export default function EventPage() {
                 orderId,
                 eventId: event.id,
                 eventTitle: event.title,
+                eventDate: event.date,
+                eventLocation: event.location,
+                eventPalette: event.palette,
                 customer: { ...customerInfo },
                 items: [...cart],
                 baseTotal,
@@ -75,15 +78,15 @@ export default function EventPage() {
                 createdAt: new Date().toISOString()
             };
 
-            recordOrder(orderRecord);
-            setLastOrder(orderRecord);
+            const savedOrder = recordOrder(orderRecord);
+            setLastOrder(savedOrder);
             setIsCheckingOut(false);
             setSuccess(true);
             clearCart();
 
             // Automatically send ticket passes & receipt via Resend
             setEmailStatus({ loading: true, sent: false, error: null });
-            const emailResult = await emailService.sendTicketConfirmationEmail(orderRecord, event);
+            const emailResult = await emailService.sendTicketConfirmationEmail(savedOrder, event);
             if (emailResult.success) {
                 setEmailStatus({ loading: false, sent: true, error: null });
             } else {
