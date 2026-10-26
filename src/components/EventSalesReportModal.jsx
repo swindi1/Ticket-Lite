@@ -1,7 +1,20 @@
 import React, { useState } from 'react';
 
+/**
+ * EventSalesReportModal
+ * 
+ * Performance Matrix & Financial Reconciliation Modal
+ * - Displays "Ticket Sales Tracker & Performance Matrix" matching executive reporting specs:
+ *   - Top KPI cards: TOTAL TICKETS SOLD and TOTAL GROSS REVENUE (omits Average Ticket Price per spec)
+ *   - Matrix Breakdown Table: Ticket Type along Y-axis, Price along X-axis, bottom summary totals
+ *   - Dual-Axis Combo Chart: Ticket Sales Volume & Revenue by Tier (SVG with volume bars & revenue line)
+ * - Retains full promoter fee reconciliation and net payout settlement tally
+ * - Attendee order log with direct pass links and copyable order IDs
+ * - CSV Export reflecting the matrix breakdown format
+ */
 export default function EventSalesReportModal({ isOpen, onClose, event, orders, promoter }) {
     const [copiedOrderId, setCopiedOrderId] = useState(null);
+    const [hoveredTierIdx, setHoveredTierIdx] = useState(null);
 
     if (!isOpen || !event) return null;
 
@@ -13,97 +26,127 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
         return o.eventTitle === event.title;
     });
 
-    // 1. Calculate sales breakdown by ticket type and price
-    const ticketTiers = (event.tickets || []).map((ticket, idx) => {
-        const tierName = ticket.name || `Tier #${idx + 1}`;
-        const unitPrice = parseFloat(ticket.price) || 0;
-        const capacity = parseInt(ticket.quantity) || 0;
-
-        // Calculate sold quantity across all event orders
-        const soldQty = eventOrders.reduce((sum, order) => {
-            const matchedItems = (order.items || []).filter(item => {
-                const nameMatches = item.name && item.name.trim().toLowerCase() === tierName.trim().toLowerCase();
-                return nameMatches;
-            });
-            return sum + matchedItems.reduce((itemSum, item) => itemSum + (item.quantity || 0), 0);
-        }, 0);
-
-        const remainingQty = Math.max(0, capacity - soldQty);
-        const grossRevenue = soldQty * unitPrice;
-        const projectedRevenueAtCapacity = capacity * unitPrice;
-        const selloutPercent = capacity > 0 ? Math.min(100, Math.round((soldQty / capacity) * 100)) : 0;
-
-        return {
-            id: ticket.id || `tier_${idx}`,
-            name: tierName,
-            price: unitPrice,
-            note: ticket.note || '',
-            capacity,
-            soldQty,
-            remainingQty,
-            grossRevenue,
-            projectedRevenueAtCapacity,
-            selloutPercent
-        };
+    // 1. Gather all unique price points (X-Axis) sorted ascending
+    const priceSet = new Set();
+    (event.tickets || []).forEach(t => {
+        const p = parseFloat(t.price);
+        if (!isNaN(p)) priceSet.add(p);
     });
-
-    // Check if there are any tickets sold that don't match configured tiers
-    const untrackedItems = [];
     eventOrders.forEach(order => {
         (order.items || []).forEach(item => {
-            const matchesConfigured = ticketTiers.some(t => t.name.toLowerCase() === (item.name || '').toLowerCase());
-            if (!matchesConfigured) {
-                const existing = untrackedItems.find(u => u.name === item.name && u.price === item.price);
-                if (existing) {
-                    existing.soldQty += item.quantity || 0;
-                    existing.grossRevenue += (item.quantity || 0) * (item.price || 0);
-                } else {
-                    untrackedItems.push({
-                        id: `untracked_${item.name}`,
-                        name: item.name,
-                        price: item.price || 0,
-                        capacity: item.quantity || 0,
-                        soldQty: item.quantity || 0,
-                        remainingQty: 0,
-                        grossRevenue: (item.quantity || 0) * (item.price || 0),
-                        projectedRevenueAtCapacity: (item.quantity || 0) * (item.price || 0),
-                        selloutPercent: 100
-                    });
-                }
+            const p = parseFloat(item.price);
+            if (!isNaN(p)) priceSet.add(p);
+        });
+    });
+
+    let pricePoints = Array.from(priceSet).sort((a, b) => a - b);
+    if (pricePoints.length === 0) {
+        pricePoints = [0];
+    }
+
+    // 2. Gather all ticket tiers (Y-Axis)
+    // First, configured tiers in event.tickets
+    const configuredTiers = (event.tickets || []).map((ticket, idx) => ({
+        id: ticket.id || `tier_${idx}`,
+        name: ticket.name || `Tier #${idx + 1}`,
+        configuredPrice: parseFloat(ticket.price) || 0,
+        capacity: parseInt(ticket.quantity) || 0,
+        note: ticket.note || ''
+    }));
+
+    // Find any untracked tier names sold in orders that weren't in configured tiers
+    const extraTierNames = [];
+    eventOrders.forEach(order => {
+        (order.items || []).forEach(item => {
+            const itemName = (item.name || '').trim();
+            if (
+                itemName &&
+                !configuredTiers.some(t => t.name.trim().toLowerCase() === itemName.toLowerCase()) &&
+                !extraTierNames.some(n => n.toLowerCase() === itemName.toLowerCase())
+            ) {
+                extraTierNames.push(itemName);
             }
         });
     });
 
-    const allReportingTiers = [...ticketTiers, ...untrackedItems];
+    const allTierRows = [
+        ...configuredTiers.map(t => ({
+            id: t.id,
+            name: t.name,
+            capacity: t.capacity,
+            note: t.note
+        })),
+        ...extraTierNames.map((name, idx) => ({
+            id: `extra_tier_${idx}`,
+            name,
+            capacity: 0,
+            note: ''
+        }))
+    ];
 
-    // 2. High-level rollups and projections
-    const totalCapacity = ticketTiers.reduce((s, t) => s + t.capacity, 0);
-    const totalSold = allReportingTiers.reduce((s, t) => s + t.soldQty, 0);
-    const totalRemaining = Math.max(0, totalCapacity - totalSold);
-    const overallSelloutPercent = totalCapacity > 0 ? Math.min(100, Math.round((totalSold / totalCapacity) * 100)) : 0;
+    if (allTierRows.length === 0) {
+        allTierRows.push({ id: 'default_tier', name: 'General Admission', capacity: 0, note: '' });
+    }
 
-    const totalGrossTicketSales = allReportingTiers.reduce((s, t) => s + t.grossRevenue, 0);
-    const totalProjectedTicketRevenue = ticketTiers.reduce((s, t) => s + t.projectedRevenueAtCapacity, 0);
-    const remainingRevenuePotential = Math.max(0, totalProjectedTicketRevenue - totalGrossTicketSales);
+    // 3. Compute Matrix cells: count of tickets sold for each tier at each price point
+    const matrixRows = allTierRows.map(tier => {
+        const salesByPrice = {};
+        let rowSold = 0;
+        let rowRevenue = 0;
 
-    // 3. Fee breakdown calculations
-    // Event configured fees
+        pricePoints.forEach(price => {
+            const count = eventOrders.reduce((sum, order) => {
+                const matchedItems = (order.items || []).filter(item => {
+                    const nameMatches = (item.name || '').trim().toLowerCase() === tier.name.trim().toLowerCase();
+                    const priceMatches = Math.abs((parseFloat(item.price) || 0) - price) < 0.001;
+                    return nameMatches && priceMatches;
+                });
+                return sum + matchedItems.reduce((s, i) => s + (parseInt(i.quantity) || 0), 0);
+            }, 0);
+
+            salesByPrice[price] = count;
+            rowSold += count;
+            rowRevenue += count * price;
+        });
+
+        return {
+            ...tier,
+            salesByPrice,
+            totalSold: rowSold,
+            totalRevenue: rowRevenue
+        };
+    });
+
+    // 4. Compute column totals for each price point along bottom of the table
+    const colTotals = {};
+    let grandTotalSold = 0;
+    let grandTotalRevenue = 0;
+
+    pricePoints.forEach(price => {
+        const colSum = matrixRows.reduce((sum, row) => sum + (row.salesByPrice[price] || 0), 0);
+        colTotals[price] = colSum;
+        grandTotalSold += colSum;
+    });
+
+    grandTotalRevenue = matrixRows.reduce((sum, row) => sum + row.totalRevenue, 0);
+
+    // Rollups
+    const totalCapacity = configuredTiers.reduce((s, t) => s + t.capacity, 0);
+    const overallSelloutPercent = totalCapacity > 0 ? Math.min(100, Math.round((grandTotalSold / totalCapacity) * 100)) : 0;
+
+    // 5. Fee breakdown calculations
     const configuredFees = event.fees || [];
-
-    // Calculate total fees collected from customer orders for this event
     const feesCollectedBreakdown = configuredFees.map(fee => {
         const feeAmount = parseFloat(fee.amount) || 0;
         let totalCollectedForThisFee = 0;
         let appliedCount = 0;
 
         eventOrders.forEach(order => {
-            // Check if order contains this fee in its itemized fees
             const matchedFee = (order.fees || []).find(f => f.name && f.name.toLowerCase() === fee.name.toLowerCase());
             if (matchedFee) {
                 totalCollectedForThisFee += parseFloat(matchedFee.amount) || 0;
                 appliedCount++;
             } else {
-                // Fallback calculation based on fee type
                 if (fee.type === 'fixed_per_transaction') {
                     totalCollectedForThisFee += feeAmount;
                     appliedCount++;
@@ -136,26 +179,49 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
         return sum + (orderTotal * 0.029 + 0.30);
     }, 0);
 
-    // Promoter Payout Calculations:
     // Promoter Net Payout = Total Gross Ticket Sales + Total Fees Collected - Payment Gateway/Platform Fees
-    const netPayoutToPromoter = Math.max(0, totalGrossTicketSales + totalFeesCollected - estimatedGatewayFees);
+    const netPayoutToPromoter = Math.max(0, grandTotalRevenue + totalFeesCollected - estimatedGatewayFees);
 
-    // CSV Export Handler
+    // Helper for chart scale computation
+    const getChartScale = (maxVal, isCurrency = false) => {
+        const safeMax = Math.max(maxVal || 0, isCurrency ? 100 : 4);
+        const rawStep = safeMax / 4;
+        const power = Math.pow(10, Math.floor(Math.log10(rawStep)));
+        const fraction = rawStep / power;
+        let step;
+        if (fraction <= 1) step = power;
+        else if (fraction <= 2) step = 2 * power;
+        else if (fraction <= 2.5) step = 2.5 * power;
+        else if (fraction <= 5) step = 5 * power;
+        else step = 10 * power;
+
+        const maxTick = step * 4;
+        const ticks = [0, step, step * 2, step * 3, maxTick];
+        return { maxTick, ticks };
+    };
+
+    const maxUnitsSold = Math.max(...matrixRows.map(r => r.totalSold), 0);
+    const maxRevenueAchieved = Math.max(...matrixRows.map(r => r.totalRevenue), 0);
+
+    const unitScale = getChartScale(maxUnitsSold, false);
+    const revScale = getChartScale(maxRevenueAchieved, true);
+
+    // CSV Export Handler conforming to the Matrix Layout
     const handleExportCsv = () => {
         const lines = [
-            `"Ticket Lite - Event Sales & Projections Report"`,
+            `"Ticket Lite - Event Sales Tracker & Performance Matrix"`,
             `"Event Title:","${(event.title || '').replace(/"/g, '""')}"`,
             `"Date:","${event.date || 'TBA'}"`,
             `"Location:","${(event.location || '').replace(/"/g, '""')}"`,
             `"Promoter:","${(promoter?.name || 'Promoter').replace(/"/g, '""')} (${(promoter?.organization_name || '').replace(/"/g, '""')})"`,
             `"Generated At:","${new Date().toLocaleString()}"`,
             ``,
-            `"--- TICKET SALES BY TYPE & PRICE ---"`,
-            `"Ticket Type","Unit Price","Allocated Capacity","Tickets Sold","Remaining","Gross Revenue","Projected (100% Sellout)","Sellout %"`,
-            ...allReportingTiers.map(t =>
-                `"${t.name.replace(/"/g, '""')}","$${t.price.toFixed(2)}","${t.capacity}","${t.soldQty}","${t.remainingQty}","$${t.grossRevenue.toFixed(2)}","$${t.projectedRevenueAtCapacity.toFixed(2)}","${t.selloutPercent}%"`
+            `"--- TICKET SALES TRACKER & PERFORMANCE MATRIX ---"`,
+            `"Ticket Type",${pricePoints.map(p => `"$${p.toFixed(2)}"`).join(',')},"Total Tickets Sold","Total Revenue"`,
+            ...matrixRows.map(row =>
+                `"${row.name.replace(/"/g, '""')}",${pricePoints.map(p => row.salesByPrice[p] || 0).join(',')},"${row.totalSold}","$${row.totalRevenue.toFixed(2)}"`
             ),
-            `"TOTALS","-","${totalCapacity}","${totalSold}","${totalRemaining}","$${totalGrossTicketSales.toFixed(2)}","$${totalProjectedTicketRevenue.toFixed(2)}","${overallSelloutPercent}%"`,
+            `"Total Ticket Sales",${pricePoints.map(p => colTotals[p] || 0).join(',')},"${grandTotalSold}","$${grandTotalRevenue.toFixed(2)}"`,
             ``,
             `"--- FEE STRUCTURE & RECONCILIATION ---"`,
             `"Fee Name","Rate / Type","Times Applied","Total Collected"`,
@@ -165,9 +231,9 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
             `"Total Fees Collected","-","-","$${totalFeesCollected.toFixed(2)}"`,
             ``,
             `"--- PROMOTER FINANCIAL SUMMARY & NET PAYOUT ---"`,
-            `"Gross Ticket Sales:","$${totalGrossTicketSales.toFixed(2)}"`,
+            `"Gross Ticket Sales:","$${grandTotalRevenue.toFixed(2)}"`,
             `"Promoter Fees Collected:","$${totalFeesCollected.toFixed(2)}"`,
-            `"Total Gross Revenue:","$${(totalGrossTicketSales + totalFeesCollected).toFixed(2)}"`,
+            `"Total Gross Revenue:","$${(grandTotalRevenue + totalFeesCollected).toFixed(2)}"`,
             `"Less Estimated Gateway & Platform Costs:","-$${estimatedGatewayFees.toFixed(2)}"`,
             `"TOTAL FEES & NET REVENUE PAID TO PROMOTER:","$${netPayoutToPromoter.toFixed(2)}"`,
             ``,
@@ -187,11 +253,21 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.setAttribute('href', url);
-        link.setAttribute('download', `sales-report-${(event.title || 'event').toLowerCase().replace(/[^a-z0-9]/g, '-')}.csv`);
+        link.setAttribute('download', `sales-matrix-${(event.title || 'event').toLowerCase().replace(/[^a-z0-9]/g, '-')}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
     };
+
+    // SVG Chart dimensions
+    const svgWidth = 800;
+    const svgHeight = 360;
+    const leftMargin = 65;
+    const rightMargin = 80;
+    const topMargin = 25;
+    const bottomMargin = 85;
+    const plotW = svgWidth - leftMargin - rightMargin;
+    const plotH = svgHeight - topMargin - bottomMargin;
 
     return (
         <div style={{
@@ -214,7 +290,7 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
                 className="animate-fade-in glass-panel"
                 style={{
                     width: '100%',
-                    maxWidth: '960px',
+                    maxWidth: '1020px',
                     maxHeight: '92vh',
                     overflowY: 'auto',
                     background: '#0d1322',
@@ -227,12 +303,12 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
                     gap: '24px'
                 }}
             >
-                {/* Modal Header */}
+                {/* Modal Header Bar */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '20px' }}>
                     <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
                             <span style={{ fontSize: '0.8rem', fontWeight: 700, padding: '4px 10px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.3)', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                                📊 Sales & Projections Report
+                                📊 Sales Reports & Financial Matrix
                             </span>
                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                 {event.date ? (isNaN(new Date(event.date)) ? event.date : new Date(event.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })) : 'Date TBA'}
@@ -306,6 +382,7 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
                                 height: '36px',
                                 display: 'flex',
                                 alignItems: 'center',
+                                justifySelf: 'center',
                                 justifyContent: 'center'
                             }}
                         >
@@ -314,174 +391,439 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
                     </div>
                 </div>
 
-                {/* Key Metrics Cards */}
+                {/* =========================================================================
+                    PERFORMANCE MATRIX REPORT CONTAINER (MATCHING ATTACHED SPECIFICATION)
+                    ========================================================================= */}
                 <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                    gap: '16px'
+                    background: '#ffffff',
+                    color: '#0f172a',
+                    borderRadius: '16px',
+                    padding: '28px',
+                    boxShadow: '0 12px 36px rgba(0,0,0,0.4)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '24px'
                 }}>
-                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '18px' }}>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>
-                            Gross Ticket Sales
-                        </div>
-                        <div className="gradient-text" style={{ fontSize: '1.8rem', fontWeight: 800 }}>
-                            ${totalGrossTicketSales.toFixed(2)}
-                        </div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginTop: '4px' }}>
-                            Across {totalSold} sold tickets
-                        </div>
+                    {/* Header: Ticket Sales Tracker & Performance Matrix */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                        <h2 style={{
+                            margin: 0,
+                            fontSize: '1.5rem',
+                            fontWeight: 800,
+                            color: '#1e3a8a',
+                            letterSpacing: '-0.02em',
+                            fontFamily: 'system-ui, -apple-system, sans-serif'
+                        }}>
+                            Ticket Sales Tracker & Performance Matrix
+                        </h2>
+                        {totalCapacity > 0 && (
+                            <span style={{
+                                fontSize: '0.8rem',
+                                fontWeight: 600,
+                                color: '#475569',
+                                background: '#f1f5f9',
+                                padding: '4px 10px',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1'
+                            }}>
+                                Capacity: {grandTotalSold.toLocaleString()} / {totalCapacity.toLocaleString()} ({overallSelloutPercent}% sold)
+                            </span>
+                        )}
                     </div>
 
-                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '18px' }}>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>
-                            Capacity & Sellout
-                        </div>
-                        <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#fff' }}>
-                            {totalSold} <span style={{ fontSize: '1.1rem', color: 'var(--text-muted)' }}>/ {totalCapacity}</span>
-                        </div>
-                        <div style={{ color: overallSelloutPercent > 75 ? 'var(--accent-primary)' : 'var(--text-muted)', fontSize: '0.78rem', marginTop: '4px', fontWeight: 600 }}>
-                            {overallSelloutPercent}% capacity sold ({totalRemaining} remaining)
-                        </div>
-                    </div>
-
-                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '18px' }}>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>
-                            Projected Gross (100% Sellout)
-                        </div>
-                        <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-secondary)' }}>
-                            ${totalProjectedTicketRevenue.toFixed(2)}
-                        </div>
-                        <div style={{ color: '#10b981', fontSize: '0.78rem', marginTop: '4px' }}>
-                            +${remainingRevenuePotential.toFixed(2)} potential remaining
-                        </div>
-                    </div>
-
+                    {/* Top Summary Cards (Image Reference: Clean Box, omits Average Ticket Price) */}
                     <div style={{
-                        background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.05) 100%)',
-                        border: '1px solid rgba(16, 185, 129, 0.3)',
-                        borderRadius: '12px',
-                        padding: '18px'
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                        background: '#f8fafc',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '6px',
+                        overflow: 'hidden'
                     }}>
-                        <div style={{ color: '#10b981', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px', fontWeight: 700 }}>
-                            Net Promoter Payout
-                        </div>
-                        <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#10b981' }}>
-                            ${netPayoutToPromoter.toFixed(2)}
-                        </div>
-                        <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '0.78rem', marginTop: '4px' }}>
-                            Gross sales + promoter fees - processing
-                        </div>
-                    </div>
-                </div>
-
-                {/* Sellout Progress Bar */}
-                <div style={{ background: 'rgba(0,0,0,0.25)', padding: '16px 20px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.85rem' }}>
-                        <span style={{ fontWeight: 600 }}>Event Ticket Capacity Progress</span>
-                        <span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>{overallSelloutPercent}% Sold ({totalSold} / {totalCapacity} Tickets)</span>
-                    </div>
-                    <div style={{ width: '100%', height: '10px', background: 'rgba(255,255,255,0.1)', borderRadius: '10px', overflow: 'hidden' }}>
+                        {/* TOTAL TICKETS SOLD */}
                         <div style={{
-                            width: `${overallSelloutPercent}%`,
-                            height: '100%',
-                            background: 'linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), #10b981)',
-                            borderRadius: '10px',
-                            transition: 'width 0.5s ease-in-out'
-                        }} />
-                    </div>
-                </div>
+                            padding: '18px 24px',
+                            textAlign: 'center',
+                            borderRight: '1px solid #cbd5e1'
+                        }}>
+                            <div style={{
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                color: '#475569',
+                                letterSpacing: '0.8px',
+                                textTransform: 'uppercase',
+                                marginBottom: '6px'
+                            }}>
+                                TOTAL TICKETS SOLD
+                            </div>
+                            <div style={{
+                                fontSize: '2.2rem',
+                                fontWeight: 800,
+                                color: '#1e3a8a',
+                                lineHeight: 1.1,
+                                letterSpacing: '-0.02em'
+                            }}>
+                                {grandTotalSold.toLocaleString()}
+                            </div>
+                            <div style={{
+                                fontSize: '0.78rem',
+                                color: '#64748b',
+                                fontStyle: 'italic',
+                                marginTop: '6px'
+                            }}>
+                                All active tiers
+                            </div>
+                        </div>
 
-                {/* Section 1: Ticket Sales Separated by Ticket Type and Price */}
-                <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                        <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span>🎟️</span> Ticket Sales Breakdown (By Type & Price)
-                        </h3>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                            {allReportingTiers.length} Ticket Class{allReportingTiers.length === 1 ? '' : 'es'}
-                        </span>
+                        {/* TOTAL GROSS REVENUE */}
+                        <div style={{
+                            padding: '18px 24px',
+                            textAlign: 'center'
+                        }}>
+                            <div style={{
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                color: '#475569',
+                                letterSpacing: '0.8px',
+                                textTransform: 'uppercase',
+                                marginBottom: '6px'
+                            }}>
+                                TOTAL GROSS REVENUE
+                            </div>
+                            <div style={{
+                                fontSize: '2.2rem',
+                                fontWeight: 800,
+                                color: '#1e3a8a',
+                                lineHeight: 1.1,
+                                letterSpacing: '-0.02em'
+                            }}>
+                                ${grandTotalRevenue.toLocaleString(undefined, { minimumFractionDigits: grandTotalRevenue % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div style={{
+                                fontSize: '0.78rem',
+                                color: '#64748b',
+                                fontStyle: 'italic',
+                                marginTop: '6px'
+                            }}>
+                                Combined gross earnings
+                            </div>
+                        </div>
                     </div>
 
-                    <div style={{ overflowX: 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+                    {/* Breakdown Matrix Table: Ticket Type along Y axis, Price along X axis */}
+                    <div style={{
+                        overflowX: 'auto',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '4px'
+                    }}>
+                        <table style={{
+                            width: '100%',
+                            borderCollapse: 'collapse',
+                            fontSize: '0.88rem',
+                            textAlign: 'left'
+                        }}>
                             <thead>
-                                <tr style={{ background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                    <th style={{ padding: '14px 16px' }}>Ticket Type / Tier</th>
-                                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Price</th>
-                                    <th style={{ padding: '14px 16px', textAlign: 'center' }}>Allocated</th>
-                                    <th style={{ padding: '14px 16px', textAlign: 'center' }}>Sold</th>
-                                    <th style={{ padding: '14px 16px', textAlign: 'center' }}>Remaining</th>
-                                    <th style={{ padding: '14px 16px', textAlign: 'center', minWidth: '130px' }}>Sellout %</th>
-                                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Gross Sales</th>
-                                    <th style={{ padding: '14px 16px', textAlign: 'right' }}>Projected (100%)</th>
+                                <tr style={{
+                                    background: '#204975',
+                                    color: '#ffffff',
+                                    fontWeight: 700,
+                                    fontSize: '0.85rem'
+                                }}>
+                                    <th style={{ padding: '12px 16px', textAlign: 'left', minWidth: '140px' }}>
+                                        Ticket Type
+                                    </th>
+                                    {pricePoints.map(p => (
+                                        <th key={p} style={{ padding: '12px 16px', textAlign: 'center', minWidth: '90px' }}>
+                                            ${p.toFixed(2)}
+                                        </th>
+                                    ))}
+                                    <th style={{ padding: '12px 16px', textAlign: 'center', minWidth: '130px' }}>
+                                        Total Tickets Sold
+                                    </th>
+                                    <th style={{ padding: '12px 16px', textAlign: 'right', minWidth: '120px' }}>
+                                        Total Revenue
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {allReportingTiers.map((tier) => (
-                                    <tr key={tier.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.01)' }}>
-                                        <td style={{ padding: '14px 16px', fontWeight: 600, color: '#fff' }}>
-                                            <div>{tier.name}</div>
-                                            {tier.note && (
-                                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginTop: '2px', maxWidth: '280px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {tier.note}
+                                {matrixRows.map((row, idx) => (
+                                    <tr
+                                        key={row.id}
+                                        style={{
+                                            background: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                                            borderBottom: '1px solid #e2e8f0'
+                                        }}
+                                    >
+                                        <td style={{ padding: '12px 16px', fontWeight: 700, color: '#0f172a' }}>
+                                            <div>{row.name}</div>
+                                            {row.note && (
+                                                <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 400, marginTop: '2px' }}>
+                                                    {row.note}
                                                 </div>
                                             )}
                                         </td>
-                                        <td style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 600, color: 'var(--accent-primary)' }}>
-                                            ${tier.price.toFixed(2)}
+                                        {pricePoints.map(p => {
+                                            const count = row.salesByPrice[p] || 0;
+                                            return (
+                                                <td key={p} style={{
+                                                    padding: '12px 16px',
+                                                    textAlign: 'center',
+                                                    color: count > 0 ? '#0f172a' : '#94a3b8',
+                                                    fontWeight: count > 0 ? 600 : 400
+                                                }}>
+                                                    {count}
+                                                </td>
+                                            );
+                                        })}
+                                        <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 800, color: '#0f172a' }}>
+                                            {row.totalSold.toLocaleString()}
                                         </td>
-                                        <td style={{ padding: '14px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                                            {tier.capacity}
-                                        </td>
-                                        <td style={{ padding: '14px 16px', textAlign: 'center', fontWeight: 700, color: tier.soldQty > 0 ? '#10b981' : 'var(--text-muted)' }}>
-                                            {tier.soldQty}
-                                        </td>
-                                        <td style={{ padding: '14px 16px', textAlign: 'center', color: tier.remainingQty === 0 ? '#ef4444' : 'var(--text-muted)' }}>
-                                            {tier.remainingQty === 0 ? 'SOLD OUT' : tier.remainingQty}
-                                        </td>
-                                        <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
-                                                    <div style={{
-                                                        width: `${tier.selloutPercent}%`,
-                                                        height: '100%',
-                                                        background: tier.selloutPercent >= 100 ? '#10b981' : 'var(--accent-primary)',
-                                                        borderRadius: '3px'
-                                                    }} />
-                                                </div>
-                                                <span style={{ fontSize: '0.78rem', minWidth: '32px', textAlign: 'right', fontWeight: 600 }}>
-                                                    {tier.selloutPercent}%
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 700, color: '#fff' }}>
-                                            ${tier.grossRevenue.toFixed(2)}
-                                        </td>
-                                        <td style={{ padding: '14px 16px', textAlign: 'right', color: 'var(--text-muted)' }}>
-                                            ${tier.projectedRevenueAtCapacity.toFixed(2)}
+                                        <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 700, color: '#1e3a8a' }}>
+                                            ${row.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: row.totalRevenue % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 })}
                                         </td>
                                     </tr>
                                 ))}
                             </tbody>
                             <tfoot>
-                                <tr style={{ background: 'rgba(255,255,255,0.06)', fontWeight: 800, borderTop: '2px solid rgba(255,255,255,0.15)' }}>
-                                    <td style={{ padding: '14px 16px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        Total Tiers Summary
+                                <tr style={{
+                                    background: '#f1f5f9',
+                                    borderTop: '2px solid #204975',
+                                    fontWeight: 800,
+                                    color: '#0f172a'
+                                }}>
+                                    <td style={{ padding: '12px 16px', fontWeight: 800 }}>
+                                        Total Ticket Sales
                                     </td>
-                                    <td style={{ padding: '14px 16px', textAlign: 'right' }}>-</td>
-                                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>{totalCapacity}</td>
-                                    <td style={{ padding: '14px 16px', textAlign: 'center', color: '#10b981' }}>{totalSold}</td>
-                                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>{totalRemaining}</td>
-                                    <td style={{ padding: '14px 16px', textAlign: 'center', color: 'var(--accent-primary)' }}>{overallSelloutPercent}%</td>
-                                    <td style={{ padding: '14px 16px', textAlign: 'right', fontSize: '1rem', color: '#fff' }}>
-                                        ${totalGrossTicketSales.toFixed(2)}
+                                    {pricePoints.map(p => (
+                                        <td key={p} style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 800 }}>
+                                            {(colTotals[p] || 0).toLocaleString()}
+                                        </td>
+                                    ))}
+                                    <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 800 }}>
+                                        {grandTotalSold.toLocaleString()}
                                     </td>
-                                    <td style={{ padding: '14px 16px', textAlign: 'right', fontSize: '1rem', color: 'var(--accent-secondary)' }}>
-                                        ${totalProjectedTicketRevenue.toFixed(2)}
+                                    <td style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 800, color: '#1e3a8a' }}>
+                                        ${grandTotalRevenue.toLocaleString(undefined, { minimumFractionDigits: grandTotalRevenue % 1 === 0 ? 0 : 2, maximumFractionDigits: 2 })}
                                     </td>
                                 </tr>
                             </tfoot>
                         </table>
+                    </div>
+
+                    {/* Visual Dual-Axis Chart: Ticket Sales Volume & Revenue by Tier */}
+                    <div style={{
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '6px',
+                        padding: '20px 24px',
+                        position: 'relative'
+                    }}>
+                        <h3 style={{
+                            margin: '0 0 16px 0',
+                            fontSize: '1.15rem',
+                            color: '#475569',
+                            fontWeight: 600
+                        }}>
+                            Ticket Sales Volume & Revenue by Tier
+                        </h3>
+
+                        <div style={{ width: '100%', overflowX: 'auto' }}>
+                            <svg
+                                viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                                style={{ width: '100%', minWidth: '600px', height: 'auto', display: 'block' }}
+                            >
+                                {/* Left Y-Axis Title */}
+                                <text
+                                    transform={`rotate(-90)`}
+                                    x={-(topMargin + plotH / 2)}
+                                    y={18}
+                                    textAnchor="middle"
+                                    fill="#475569"
+                                    fontSize="12"
+                                    fontWeight="600"
+                                >
+                                    Tickets Sold (Units)
+                                </text>
+
+                                {/* Horizontal Grid Lines & Y-Axis Tick Labels (5 lines: 0%, 25%, 50%, 75%, 100%) */}
+                                {[0, 1, 2, 3, 4].map(idx => {
+                                    const y = topMargin + (plotH * (4 - idx)) / 4;
+                                    const unitVal = unitScale.ticks[idx];
+                                    const revVal = revScale.ticks[idx];
+
+                                    return (
+                                        <g key={idx}>
+                                            {/* Horizontal Grid Line */}
+                                            <line
+                                                x1={leftMargin}
+                                                y1={y}
+                                                x2={leftMargin + plotW}
+                                                y2={y}
+                                                stroke="#e2e8f0"
+                                                strokeWidth="1"
+                                            />
+                                            {/* Left Tick (Units Sold) */}
+                                            <text
+                                                x={leftMargin - 10}
+                                                y={y + 4}
+                                                textAnchor="end"
+                                                fill="#475569"
+                                                fontSize="11"
+                                                fontWeight="500"
+                                            >
+                                                {unitVal.toLocaleString()}
+                                            </text>
+                                            {/* Right Tick (Revenue) */}
+                                            <text
+                                                x={leftMargin + plotW + 10}
+                                                y={y + 4}
+                                                textAnchor="start"
+                                                fill="#475569"
+                                                fontSize="11"
+                                                fontWeight="500"
+                                            >
+                                                ${revVal.toLocaleString()}
+                                            </text>
+                                        </g>
+                                    );
+                                })}
+
+                                {/* Bottom Baseline Line */}
+                                <line
+                                    x1={leftMargin}
+                                    y1={topMargin + plotH}
+                                    x2={leftMargin + plotW}
+                                    y2={topMargin + plotH}
+                                    stroke="#64748b"
+                                    strokeWidth="1.5"
+                                />
+
+                                {/* Render Vertical Bars (Volume Sold) */}
+                                {matrixRows.map((row, i) => {
+                                    const slotW = plotW / matrixRows.length;
+                                    const barW = Math.min(65, Math.max(22, slotW * 0.55));
+                                    const barH = unitScale.maxTick > 0 ? (row.totalSold / unitScale.maxTick) * plotH : 0;
+                                    const barX = leftMargin + i * slotW + (slotW - barW) / 2;
+                                    const barY = topMargin + plotH - barH;
+                                    const isHovered = hoveredTierIdx === i;
+
+                                    return (
+                                        <g
+                                            key={row.id}
+                                            onMouseEnter={() => setHoveredTierIdx(i)}
+                                            onMouseLeave={() => setHoveredTierIdx(null)}
+                                            style={{ cursor: 'pointer' }}
+                                        >
+                                            <title>{`${row.name}: ${row.totalSold.toLocaleString()} tickets sold • $${row.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gross revenue`}</title>
+                                            <rect
+                                                x={barX}
+                                                y={barY}
+                                                width={barW}
+                                                height={barH}
+                                                fill={isHovered ? '#1e40af' : '#2f5787'}
+                                                rx="1"
+                                                style={{ transition: 'fill 0.2s, y 0.3s, height 0.3s' }}
+                                            />
+                                        </g>
+                                    );
+                                })}
+
+                                {/* Render Revenue Overlay Trendline */}
+                                {matrixRows.length > 0 && (
+                                    <>
+                                        {/* Polyline connecting all tiers */}
+                                        <polyline
+                                            points={matrixRows.map((row, i) => {
+                                                const slotW = plotW / matrixRows.length;
+                                                const cx = leftMargin + i * slotW + slotW / 2;
+                                                const cy = revScale.maxTick > 0 ? topMargin + plotH - (row.totalRevenue / revScale.maxTick) * plotH : topMargin + plotH;
+                                                return `${cx},${cy}`;
+                                            }).join(' ')}
+                                            fill="none"
+                                            stroke="#683958"
+                                            strokeWidth="2.5"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                        />
+
+                                        {/* Point nodes at each tier */}
+                                        {matrixRows.map((row, i) => {
+                                            const slotW = plotW / matrixRows.length;
+                                            const cx = leftMargin + i * slotW + slotW / 2;
+                                            const cy = revScale.maxTick > 0 ? topMargin + plotH - (row.totalRevenue / revScale.maxTick) * plotH : topMargin + plotH;
+                                            const isHovered = hoveredTierIdx === i;
+
+                                            return (
+                                                <g
+                                                    key={`point_${row.id}`}
+                                                    onMouseEnter={() => setHoveredTierIdx(i)}
+                                                    onMouseLeave={() => setHoveredTierIdx(null)}
+                                                    style={{ cursor: 'pointer' }}
+                                                >
+                                                    <circle
+                                                        cx={cx}
+                                                        cy={cy}
+                                                        r={isHovered ? 6 : 4}
+                                                        fill="#683958"
+                                                        stroke="#ffffff"
+                                                        strokeWidth={isHovered ? 3 : 2}
+                                                        style={{ transition: 'all 0.2s' }}
+                                                    />
+                                                </g>
+                                            );
+                                        })}
+                                    </>
+                                )}
+
+                                {/* X-Axis Tier Names */}
+                                {matrixRows.map((row, i) => {
+                                    const slotW = plotW / matrixRows.length;
+                                    const cx = leftMargin + i * slotW + slotW / 2;
+
+                                    return (
+                                        <text
+                                            key={`label_${row.id}`}
+                                            x={cx}
+                                            y={topMargin + plotH + 20}
+                                            textAnchor="middle"
+                                            fill="#0f172a"
+                                            fontSize="12"
+                                            fontWeight="600"
+                                        >
+                                            {row.name.length > 15 ? `${row.name.slice(0, 13)}…` : row.name}
+                                        </text>
+                                    );
+                                })}
+
+                                {/* X-Axis Label */}
+                                <text
+                                    x={leftMargin + plotW / 2}
+                                    y={topMargin + plotH + 42}
+                                    textAnchor="middle"
+                                    fill="#475569"
+                                    fontSize="12"
+                                    fontWeight="600"
+                                >
+                                    Ticket Tier
+                                </text>
+
+                                {/* Legend at Bottom of Chart */}
+                                <g transform={`translate(${leftMargin + plotW / 2 - 140}, ${topMargin + plotH + 64})`}>
+                                    {/* Volume Legend Marker */}
+                                    <rect x="0" y="0" width="16" height="12" fill="#2f5787" rx="1" />
+                                    <text x="24" y="10" fill="#0f172a" fontSize="12" fontWeight="600">
+                                        Total Tickets Sold
+                                    </text>
+
+                                    {/* Revenue Legend Marker */}
+                                    <line x1="165" y1="6" x2="185" y2="6" stroke="#683958" strokeWidth="3" strokeLinecap="round" />
+                                    <circle cx="175" cy="6" r="3.5" fill="#683958" />
+                                    <text x="195" y="10" fill="#0f172a" fontSize="12" fontWeight="600">
+                                        Total Revenue
+                                    </text>
+                                </g>
+                            </svg>
+                        </div>
                     </div>
                 </div>
 
@@ -562,7 +904,7 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.95rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                             <span style={{ color: 'var(--text-muted)' }}>1. Gross Ticket Sales (All Tiers)</span>
-                            <span style={{ fontWeight: 600, color: '#fff' }}>+${totalGrossTicketSales.toFixed(2)}</span>
+                            <span style={{ fontWeight: 600, color: '#fff' }}>+${grandTotalRevenue.toFixed(2)}</span>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -572,7 +914,7 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                             <span style={{ color: 'var(--text-muted)' }}>3. Total Gross Revenue Processed</span>
-                            <span style={{ fontWeight: 700, color: '#fff' }}>${(totalGrossTicketSales + totalFeesCollected).toFixed(2)}</span>
+                            <span style={{ fontWeight: 700, color: '#fff' }}>${(grandTotalRevenue + totalFeesCollected).toFixed(2)}</span>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
