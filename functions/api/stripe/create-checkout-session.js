@@ -96,7 +96,8 @@ export async function onRequestPost(context) {
             (typeof globalThis !== 'undefined' && (globalThis.STRIPE_SECRET_KEY || globalThis.stripe_secret_key));
         const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim().replace(/^["']|["']$/g, '') : null;
 
-        const origin = context.request.headers.get('Origin') || 'https://ticketlite.ca';
+        const rawOrigin = context.request.headers.get('Origin') || 'https://ticketlite.ca';
+        const origin = isValidRedirectUrl(rawOrigin) ? rawOrigin : 'https://ticketlite.ca';
 
         // 4. Open Redirect Prevention: Validate success and cancel URLs against allowed platform domains
         let safeSuccessUrl = `${origin}/event/${encodeURIComponent(eventId)}?session_id={CHECKOUT_SESSION_ID}&order_id=${encodeURIComponent(orderId)}&payment=success`;
@@ -107,6 +108,44 @@ export async function onRequestPost(context) {
         }
         if (cancelUrl && isValidRedirectUrl(cancelUrl)) {
             safeCancelUrl = cancelUrl;
+        }
+
+        // 4b. Server-side canonical price verification if event exists in D1 database
+        let verifiedItems = items;
+        let verifiedFees = fees;
+        const db = context.env?.DB;
+        if (db) {
+            try {
+                const dbEvent = await db
+                    .prepare('SELECT title, tickets_json, fees_json FROM events WHERE id = ?')
+                    .bind(String(eventId))
+                    .first();
+                if (dbEvent && dbEvent.tickets_json) {
+                    const canonicalTickets = JSON.parse(dbEvent.tickets_json);
+                    if (Array.isArray(canonicalTickets) && canonicalTickets.length > 0) {
+                        for (const item of items) {
+                            const matchedTier = canonicalTickets.find(
+                                t => String(t.name).trim().toLowerCase() === String(item.name).trim().toLowerCase()
+                            );
+                            if (!matchedTier) {
+                                return new Response(
+                                    JSON.stringify({ success: false, error: `Unknown ticket tier "${item.name}".` }),
+                                    { status: 400, headers }
+                                );
+                            }
+                            const expectedPrice = Number(matchedTier.price);
+                            if (Math.abs(Number(item.price) - expectedPrice) > 0.01) {
+                                return new Response(
+                                    JSON.stringify({ success: false, error: `Price mismatch detected for "${item.name}".` }),
+                                    { status: 400, headers }
+                                );
+                            }
+                        }
+                    }
+                }
+            } catch (dbErr) {
+                console.warn('D1 event lookup notice:', dbErr);
+            }
         }
 
         // Fallback / mock simulation if Stripe secret key is not set yet in Cloudflare
@@ -130,7 +169,7 @@ export async function onRequestPost(context) {
         });
 
         // 6. Build strictly validated Stripe line items
-        const lineItems = items.map(item => ({
+        const lineItems = verifiedItems.map(item => ({
             price_data: {
                 currency: 'usd',
                 product_data: {
@@ -143,8 +182,8 @@ export async function onRequestPost(context) {
         }));
 
         // Add fee line items if applicable (strictly non-negative)
-        if (Array.isArray(fees)) {
-            fees.forEach(fee => {
+        if (Array.isArray(verifiedFees)) {
+            verifiedFees.forEach(fee => {
                 const amountCents = Math.round(Number(fee.amount) * 100);
                 if (amountCents > 0) {
                     lineItems.push({
@@ -195,10 +234,11 @@ export async function onRequestPost(context) {
             { status: 200, headers }
         );
     } catch (err) {
+        console.error('Stripe checkout session error:', err);
         return new Response(
             JSON.stringify({
                 success: false,
-                error: err.message || 'Failed to initialize Stripe checkout session.'
+                error: 'Failed to initialize Stripe checkout session.'
             }),
             { status: 500, headers }
         );

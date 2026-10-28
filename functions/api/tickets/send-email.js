@@ -53,15 +53,10 @@ export async function onRequestPost(context) {
         }
 
         if (!apiKey) {
-            const envKeys = Object.keys(context.env || {});
-            const globalKeys = typeof globalThis !== 'undefined'
-                ? Object.keys(globalThis).filter(k => k.toLowerCase().includes('resend'))
-                : [];
-            const availableKeys = [...new Set([...envKeys, ...globalKeys])].filter(k => k !== 'ASSETS');
             return new Response(
                 JSON.stringify({
                     success: false,
-                    error: `RESEND_API_KEY not found. Available variables: [${availableKeys.join(', ')}]. Please verify variable name and trigger a redeployment in Cloudflare.`
+                    error: 'Email delivery service is not configured on the server.'
                 }),
                 { status: 503, headers }
             );
@@ -94,10 +89,27 @@ export async function onRequestPost(context) {
 
         const emailClean = (customerEmail || '').trim().toLowerCase();
         const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-        if (!emailClean || !emailRegex.test(emailClean) || !orderId || !eventTitle) {
+        const cleanOrderId = String(orderId || '').trim();
+        const cleanEventTitle = String(eventTitle || '').trim().slice(0, 120).replace(/[\r\n]/g, ' ');
+        if (!emailClean || !emailRegex.test(emailClean) || !/^\d{12}$/.test(cleanOrderId) || !cleanEventTitle) {
             return new Response(
                 JSON.stringify({ success: false, error: 'Missing or invalid order details.' }),
                 { status: 400, headers }
+            );
+        }
+
+        // Per-recipient rate limiting: max 3 emails per 10 minutes per recipient address
+        const recipientRateCheck = checkRateLimit(`email-recipient:${emailClean}`, 3, 10 * 60 * 1000);
+        if (!recipientRateCheck.allowed) {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: `Too many emails sent to this address recently. Please wait ${recipientRateCheck.resetSeconds} seconds.`
+                }),
+                {
+                    status: 429,
+                    headers: { ...headers, 'Retry-After': String(recipientRateCheck.resetSeconds) }
+                }
             );
         }
 
@@ -125,26 +137,32 @@ export async function onRequestPost(context) {
         // From email: custom domain if defined in Cloudflare env, otherwise defaults to verified donotreply@ticketlite.ca
         const fromEmail = context.env?.RESEND_FROM_EMAIL || 'Ticket Lite <donotreply@ticketlite.ca>';
 
-        // Build itemized table rows
-        const itemsRows = items.map(item => `
+        // Build itemized table rows with sanitized numeric fields
+        const safeItems = Array.isArray(items) ? items.slice(0, 50) : [];
+        const itemsRows = safeItems.map(item => {
+            const qty = Math.max(1, parseInt(item?.quantity, 10) || 1);
+            const price = Math.max(0, Number(item?.price) || 0);
+            return `
             <tr>
                 <td style="padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.08); color: #ffffff;">
-                    <strong>${escapeHtml(item.name)}</strong>
-                    ${item.note ? `<div style="font-size: 12px; color: #94a3b8;">${escapeHtml(item.note)}</div>` : ''}
+                    <strong>${escapeHtml(item?.name)}</strong>
+                    ${item?.note ? `<div style="font-size: 12px; color: #94a3b8;">${escapeHtml(item.note)}</div>` : ''}
                 </td>
                 <td style="padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: center; color: #94a3b8;">
-                    ${item.quantity}
+                    ${qty}
                 </td>
                 <td style="padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: right; color: #ffffff; font-weight: bold;">
-                    $${(item.price * item.quantity).toFixed(2)}
+                    $${(price * qty).toFixed(2)}
                 </td>
             </tr>
-        `).join('');
+        `;
+        }).join('');
 
-        const feesRows = fees.map(fee => `
+        const safeFees = Array.isArray(fees) ? fees.slice(0, 10) : [];
+        const feesRows = safeFees.map(fee => `
             <tr>
-                <td colspan="2" style="padding: 6px 0; color: #94a3b8; font-size: 13px;">${escapeHtml(fee.name)}</td>
-                <td style="padding: 6px 0; text-align: right; color: #94a3b8; font-size: 13px;">$${fee.amount.toFixed(2)}</td>
+                <td colspan="2" style="padding: 6px 0; color: #94a3b8; font-size: 13px;">${escapeHtml(fee?.name)}</td>
+                <td style="padding: 6px 0; text-align: right; color: #94a3b8; font-size: 13px;">$${(Math.max(0, Number(fee?.amount) || 0)).toFixed(2)}</td>
             </tr>
         `).join('');
 
@@ -334,20 +352,13 @@ export async function onRequestPost(context) {
         }
 
         if (!result.res.ok) {
-            const errorMsg = result.data.message ||
-                (typeof result.data.error === 'string' ? result.data.error : result.data.error?.message) ||
-                result.text ||
-                `Resend HTTP ${result.res.status}: Failed to send email.`;
+            console.error('Resend API delivery failure:', result.res.status, result.data);
             return new Response(
                 JSON.stringify({
                     success: false,
-                    resendStatus: result.res.status,
-                    error: errorMsg,
-                    senderTried: result.sender,
-                    details: result.data,
-                    fallbackDetails: result.fallbackData
+                    error: 'Failed to send confirmation email.'
                 }),
-                { status: result.res.status, headers }
+                { status: 502, headers }
             );
         }
 
@@ -355,16 +366,16 @@ export async function onRequestPost(context) {
             JSON.stringify({
                 success: true,
                 id: result.data.id,
-                recipient: customerEmail,
-                sender: result.sender
+                recipient: emailClean
             }),
             { status: 200, headers }
         );
     } catch (err) {
+        console.error('Error sending ticket email:', err);
         return new Response(
             JSON.stringify({
                 success: false,
-                error: err.message || 'Internal server error while sending email.'
+                error: 'Internal server error while sending email.'
             }),
             { status: 500, headers }
         );

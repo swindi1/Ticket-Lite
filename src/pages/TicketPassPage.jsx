@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
 import WalletModal from '../components/WalletModal';
 import { encodePassToken, decodePassToken } from '../utils/passToken';
+import { sanitizeCssColor } from '../utils/security';
 
 export default function TicketPassPage() {
     const { orderId } = useParams();
@@ -109,7 +110,7 @@ export default function TicketPassPage() {
     }
 
     const themeColors = event?.palette || order?.eventPalette || { dominant: 'rgb(236, 72, 153)', palette: [] };
-    const dominantColor = themeColors.dominant || 'var(--accent-primary)';
+    const dominantColor = sanitizeCssColor(themeColors.dominant, 'var(--accent-primary)');
 
     const handleCopyTicketLink = () => {
         const passToken = encodePassToken(order);

@@ -1,4 +1,4 @@
-import { validatePromoterRegistration, hashPassword, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
+import { validatePromoterRegistration, hashPassword, signAuthToken, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
 
 export async function onRequestOptions(context) {
     return new Response(null, {
@@ -103,13 +103,20 @@ export async function onRequestPost(context) {
             created_at: nowIso
         };
 
-        return new Response(JSON.stringify({ success: true, promoter: promoterAccount }), {
+        const authSecret = context.env?.AUTH_SECRET || context.env?.STRIPE_WEBHOOK_SECRET;
+        const token = await signAuthToken({ sub: promoterId, email: normalizedEmail }, authSecret);
+
+        return new Response(JSON.stringify({ success: true, promoter: promoterAccount, token }), {
             status: 201,
-            headers
+            headers: {
+                ...headers,
+                'Set-Cookie': `vtix_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=604800`
+            }
         });
     } catch (err) {
+        console.error('Registration error:', err);
         return new Response(
-            JSON.stringify({ error: err.message || 'Internal server error during registration.' }),
+            JSON.stringify({ error: 'Internal server error during registration.' }),
             { status: 500, headers }
         );
     }

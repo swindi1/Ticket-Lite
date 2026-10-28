@@ -206,27 +206,36 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
     const unitScale = getChartScale(maxUnitsSold, false);
     const revScale = getChartScale(maxRevenueAchieved, true);
 
+    // Neutralize CSV formula injection (=, +, -, @, tab, CR) and escape double quotes
+    const sanitizeCsvCell = (val) => {
+        const str = String(val ?? '').replace(/"/g, '""');
+        if (/^[=+\-@\t\r]/.test(str)) {
+            return `'${str}`;
+        }
+        return str;
+    };
+
     // CSV Export Handler conforming to the Matrix Layout
     const handleExportCsv = () => {
         const lines = [
             `"Ticket Lite - Event Sales Tracker & Performance Matrix"`,
-            `"Event Title:","${(event.title || '').replace(/"/g, '""')}"`,
-            `"Date:","${event.date || 'TBA'}"`,
-            `"Location:","${(event.location || '').replace(/"/g, '""')}"`,
-            `"Promoter:","${(promoter?.name || 'Promoter').replace(/"/g, '""')} (${(promoter?.organization_name || '').replace(/"/g, '""')})"`,
+            `"Event Title:","${sanitizeCsvCell(event.title || '')}"`,
+            `"Date:","${sanitizeCsvCell(event.date || 'TBA')}"`,
+            `"Location:","${sanitizeCsvCell(event.location || '')}"`,
+            `"Promoter:","${sanitizeCsvCell(promoter?.name || 'Promoter')} (${sanitizeCsvCell(promoter?.organization_name || '')})"`,
             `"Generated At:","${new Date().toLocaleString()}"`,
             ``,
             `"--- TICKET SALES TRACKER & PERFORMANCE MATRIX ---"`,
             `"Ticket Type",${pricePoints.map(p => `"$${p.toFixed(2)}"`).join(',')},"Total Tickets Sold","Total Revenue"`,
             ...matrixRows.map(row =>
-                `"${row.name.replace(/"/g, '""')}",${pricePoints.map(p => row.salesByPrice[p] || 0).join(',')},"${row.totalSold}","$${row.totalRevenue.toFixed(2)}"`
+                `"${sanitizeCsvCell(row.name)}",${pricePoints.map(p => row.salesByPrice[p] || 0).join(',')},"${row.totalSold}","$${row.totalRevenue.toFixed(2)}"`
             ),
             `"Total Ticket Sales",${pricePoints.map(p => colTotals[p] || 0).join(',')},"${grandTotalSold}","$${grandTotalRevenue.toFixed(2)}"`,
             ``,
             `"--- FEE STRUCTURE & RECONCILIATION ---"`,
             `"Fee Name","Rate / Type","Times Applied","Total Collected"`,
             ...feesCollectedBreakdown.map(f =>
-                `"${f.name.replace(/"/g, '""')}","${f.type === 'percentage' ? f.amount + '%' : '$' + f.amount.toFixed(2)}","${f.appliedCount}","$${f.totalCollected.toFixed(2)}"`
+                `"${sanitizeCsvCell(f.name)}","${f.type === 'percentage' ? f.amount + '%' : '$' + f.amount.toFixed(2)}","${f.appliedCount}","$${f.totalCollected.toFixed(2)}"`
             ),
             `"Total Fees Collected","-","-","$${totalFeesCollected.toFixed(2)}"`,
             ``,
@@ -244,7 +253,7 @@ export default function EventSalesReportModal({ isOpen, onClose, event, orders, 
         eventOrders.forEach(o => {
             const itemsStr = (o.items || []).map(i => `${i.name} x${i.quantity}`).join('; ');
             lines.push(
-                `"#${o.orderId}","${new Date(o.createdAt).toLocaleString()}","${(o.customer?.name || '').replace(/"/g, '""')}","${o.customer?.email || ''}","${itemsStr.replace(/"/g, '""')}","$${(o.total || 0).toFixed(2)}"`
+                `"#${sanitizeCsvCell(o.orderId)}","${new Date(o.createdAt).toLocaleString()}","${sanitizeCsvCell(o.customer?.name || '')}","${sanitizeCsvCell(o.customer?.email || '')}","${sanitizeCsvCell(itemsStr)}","$${(o.total || 0).toFixed(2)}"`
             );
         });
 

@@ -3,6 +3,7 @@ import { useEventData } from '../hooks/useEventData';
 import { useTheme } from '../hooks/useTheme'; // Optional fallback for visual only
 import { useAuth } from '../hooks/useAuth';
 import EventSalesReportModal from '../components/EventSalesReportModal';
+import { sanitizeCssColor, sanitizeImageUrl } from '../utils/security';
 
 const DEFAULT_TICKETS = [
     { id: 'default-t1', name: 'General Admission', price: '45', quantity: '500', note: 'Standard entry with full access to festival grounds and stages.', onSaleDate: '', timezone: 'UTC' },
@@ -158,10 +159,11 @@ export default function PromoterDashboard() {
         e.preventDefault();
 
         const newEvent = {
+            promoterId: currentPromoter?.id || null,
             title: formData.title || 'Untitled Event',
             date: formData.date || '',
             location: formData.location || 'Location TBA',
-            image: imageSrc,
+            image: sanitizeImageUrl(imageSrc),
             palette: themeColors.palette.length > 0 ? themeColors : null,
             tickets: ticketClasses.filter(t => t.name.trim() !== '').map((t, idx) => ({
                 id: `t_${Date.now()}_${idx}`,
@@ -611,11 +613,14 @@ export default function PromoterDashboard() {
                         <p style={{ color: 'var(--text-muted)' }}>No events yet. Create one to get started.</p>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                            {events.map((event) => (
+                            {events.map((event) => {
+                                const safeImage = sanitizeImageUrl(event.image);
+                                const safeDominant = sanitizeCssColor(event.palette?.dominant, 'var(--accent-primary)');
+                                return (
                                 <div key={event.id} style={{ display: 'flex', alignItems: 'center', gap: '24px', padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
                                     <div style={{
                                         width: '80px', height: '80px', borderRadius: '8px', flexShrink: 0,
-                                        background: event.image ? `url(${event.image}) center/cover` : `linear-gradient(45deg, ${event.palette?.dominant || 'var(--accent-primary)'}, var(--accent-secondary))`
+                                        background: safeImage ? `url("${safeImage}") center/cover` : `linear-gradient(45deg, ${safeDominant}, var(--accent-secondary))`
                                     }} />
                                     <div style={{ flex: 1 }}>
                                         <h3 style={{ marginBottom: '4px' }}>{event.title}</h3>
@@ -678,7 +683,8 @@ export default function PromoterDashboard() {
                                         </button>
                                     </div>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </div>

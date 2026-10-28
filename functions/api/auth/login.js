@@ -1,4 +1,4 @@
-import { validateLoginInputs, verifyPassword, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
+import { validateLoginInputs, verifyPassword, hashPassword, signAuthToken, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
 
 export async function onRequestOptions(context) {
     return new Response(null, {
@@ -73,13 +73,26 @@ export async function onRequestPost(context) {
             );
         }
 
-        // 5. Cryptographic password verification (salted SHA-256)
+        // 5. Cryptographic password verification (PBKDF2 / legacy salted SHA-256)
         const isMatch = await verifyPassword(password, account.password_hash);
         if (!isMatch) {
             return new Response(
                 JSON.stringify({ error: 'Invalid email or password.' }),
                 { status: 401, headers }
             );
+        }
+
+        // Transparently upgrade legacy single-round SHA-256 hashes to PBKDF2-SHA256
+        if (account.password_hash && !account.password_hash.startsWith('pbkdf2:')) {
+            try {
+                const upgradedHash = await hashPassword(password);
+                await db
+                    .prepare('UPDATE promoter_accounts SET password_hash = ?, updated_at = ? WHERE id = ?')
+                    .bind(upgradedHash, new Date().toISOString(), account.id)
+                    .run();
+            } catch (upgradeErr) {
+                console.warn('Password hash upgrade warning:', upgradeErr);
+            }
         }
 
         const promoterAccount = {
@@ -91,13 +104,20 @@ export async function onRequestPost(context) {
             created_at: account.created_at
         };
 
-        return new Response(JSON.stringify({ success: true, promoter: promoterAccount }), {
+        const authSecret = context.env?.AUTH_SECRET || context.env?.STRIPE_WEBHOOK_SECRET;
+        const token = await signAuthToken({ sub: account.id, email: account.email }, authSecret);
+
+        return new Response(JSON.stringify({ success: true, promoter: promoterAccount, token }), {
             status: 200,
-            headers
+            headers: {
+                ...headers,
+                'Set-Cookie': `vtix_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=604800`
+            }
         });
     } catch (err) {
+        console.error('Authentication error:', err);
         return new Response(
-            JSON.stringify({ error: err.message || 'Internal server error during authentication.' }),
+            JSON.stringify({ error: 'Internal server error during authentication.' }),
             { status: 500, headers }
         );
     }

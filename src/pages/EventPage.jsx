@@ -5,13 +5,7 @@ import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
 import WalletModal from '../components/WalletModal';
 import { emailService } from '../services/emailService';
 import { stripeService } from '../services/stripeService';
-
-// Generate a random 12-digit number (100,000,000,000 to 999,999,999,999)
-function generateOrderId() {
-    const firstDigit = Math.floor(1 + Math.random() * 9);
-    const remainingDigits = Array.from({ length: 11 }, () => Math.floor(Math.random() * 10)).join('');
-    return `${firstDigit}${remainingDigits}`;
-}
+import { generateSecureOrderId, sanitizeCssColor } from '../utils/security';
 
 export default function EventPage() {
     const { eventId } = useParams();
@@ -72,17 +66,19 @@ export default function EventPage() {
     }, [searchParams, orders, event, clearCart, recordOrder]);
 
     const themeColors = event?.palette || { palette: [] };
+    const safeDominant = sanitizeCssColor(themeColors.dominant, '');
+    const safeSecondary = sanitizeCssColor(themeColors.palette?.[1], 'var(--accent-secondary)');
     const hasCustomTheme = themeColors.palette && themeColors.palette.length > 0;
 
     let bgGradient = 'linear-gradient(180deg, rgba(30, 41, 59, 0.4) 0%, rgba(15, 23, 42, 0) 100%)';
-    if (hasCustomTheme && themeColors.dominant && themeColors.dominant.startsWith('rgb')) {
-        const rgbaColor = themeColors.dominant.replace('rgb', 'rgba').replace(')', ', 0.15)');
+    if (hasCustomTheme && safeDominant && safeDominant.startsWith('rgb(')) {
+        const rgbaColor = safeDominant.replace('rgb(', 'rgba(').replace(')', ', 0.15)');
         bgGradient = `linear-gradient(180deg, ${rgbaColor} 0%, rgba(15, 23, 42, 0) 100%)`;
     }
 
     const customStyles = hasCustomTheme ? {
-        '--accent-primary': themeColors.dominant,
-        '--accent-secondary': themeColors.palette[1],
+        '--accent-primary': safeDominant || 'var(--accent-primary)',
+        '--accent-secondary': safeSecondary,
         background: bgGradient
     } : {
         background: bgGradient
@@ -99,7 +95,7 @@ export default function EventPage() {
         if (e) e.preventDefault();
         setIsCheckingOut(true);
 
-        const orderId = generateOrderId();
+        const orderId = generateSecureOrderId();
         const orderRecord = {
             orderId,
             eventId: event.id,
@@ -138,7 +134,7 @@ export default function EventPage() {
             // If live Stripe Checkout session was returned, redirect buyer to Stripe
             if (stripeRes.url && stripeRes.mode === 'live') {
                 sessionStorage.setItem(`pending_order_${orderId}`, JSON.stringify(orderRecord));
-                recordOrder(orderRecord);
+                // Order is recorded only after verified payment return in the useEffect above
                 window.location.assign(stripeRes.url);
                 return;
             }

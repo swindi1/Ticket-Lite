@@ -126,13 +126,31 @@ export async function onRequestPost(context) {
             );
         }
 
-        // Security Defense 3: Idempotency Protection (Prevents Replay Attacks)
+        // Security Defense 3: Idempotency Protection (Prevents Replay Attacks across isolates via D1 + in-memory)
         if (isDuplicateEvent(event.id)) {
             console.warn(`Idempotency notice: Duplicate Stripe webhook event detected: ${event.id}`);
             return new Response(
                 JSON.stringify({ received: true, duplicate: true, eventId: event.id }),
                 { status: 200, headers }
             );
+        }
+
+        const db = context.env?.DB;
+        if (db && event.id) {
+            try {
+                const existingWebhook = await db
+                    .prepare('SELECT id FROM stripe_webhook_events WHERE event_id = ?')
+                    .bind(event.id)
+                    .first();
+                if (existingWebhook) {
+                    return new Response(
+                        JSON.stringify({ received: true, duplicate: true, eventId: event.id }),
+                        { status: 200, headers }
+                    );
+                }
+            } catch (dbCheckErr) {
+                console.warn('D1 webhook idempotency check notice:', dbCheckErr);
+            }
         }
 
         // Process verified webhook event
@@ -181,6 +199,27 @@ export async function onRequestPost(context) {
                 }
             } catch {
                 parsedFees = [];
+            }
+
+            // Persist webhook event and order record to D1 if bound
+            if (db) {
+                try {
+                    await db
+                        .prepare(
+                            'INSERT OR IGNORE INTO stripe_webhook_events (id, event_type, event_id, stripe_session_id, order_id, payload_json) VALUES (?, ?, ?, ?, ?, ?)'
+                        )
+                        .bind(
+                            crypto.randomUUID(),
+                            eventType,
+                            event.id,
+                            session.id || null,
+                            String(orderId),
+                            rawBody.slice(0, 10000)
+                        )
+                        .run();
+                } catch (logErr) {
+                    console.warn('D1 webhook log notice:', logErr);
+                }
             }
 
             // Secure email dispatch pipeline
@@ -235,7 +274,7 @@ export async function onRequestPost(context) {
     } catch (err) {
         console.error('Error handling Stripe webhook:', err);
         return new Response(
-            JSON.stringify({ error: err.message || 'Internal webhook error' }),
+            JSON.stringify({ error: 'Internal webhook processing error.' }),
             { status: 500, headers }
         );
     }

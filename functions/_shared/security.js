@@ -113,7 +113,30 @@ export function validateLoginInputs(email, password) {
     return { isValid: true, error: null };
 }
 
-export async function hashPassword(password, customSaltHex = null) {
+const PBKDF2_ITERATIONS = 100000;
+
+/**
+ * Constant-time string/hex comparison to prevent timing side-channel attacks.
+ */
+export function constantTimeEqual(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const encoder = new TextEncoder();
+    const bufA = encoder.encode(a);
+    const bufB = encoder.encode(b);
+    if (bufA.byteLength !== bufB.byteLength) return false;
+
+    if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.timingSafeEqual === 'function') {
+        return crypto.subtle.timingSafeEqual(bufA, bufB);
+    }
+
+    let diff = 0;
+    for (let i = 0; i < bufA.length; i++) {
+        diff |= bufA[i] ^ bufB[i];
+    }
+    return diff === 0;
+}
+
+export async function hashPassword(password, customSaltHex = null, useLegacySha256 = false) {
     let saltHex = customSaltHex;
     if (!saltHex) {
         const saltBytes = new Uint8Array(16);
@@ -122,24 +145,136 @@ export async function hashPassword(password, customSaltHex = null) {
     }
 
     const encoder = new TextEncoder();
-    const data = encoder.encode(`${saltHex}:${password}`);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 
-    return `${saltHex}:${hashHex}`;
+    if (useLegacySha256) {
+        const data = encoder.encode(`${saltHex}:${password}`);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        return `${saltHex}:${hashHex}`;
+    }
+
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(password),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveBits']
+    );
+
+    const derivedBits = await crypto.subtle.deriveBits(
+        {
+            name: 'PBKDF2',
+            salt: encoder.encode(saltHex),
+            iterations: PBKDF2_ITERATIONS,
+            hash: 'SHA-256'
+        },
+        keyMaterial,
+        256
+    );
+
+    const hashHex = Array.from(new Uint8Array(derivedBits)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `pbkdf2:${PBKDF2_ITERATIONS}:${saltHex}:${hashHex}`;
 }
 
 export async function verifyPassword(password, storedHash) {
-    if (!storedHash) return false;
+    if (!storedHash || typeof storedHash !== 'string' || !password) return false;
+
+    if (storedHash.startsWith('pbkdf2:')) {
+        const parts = storedHash.split(':');
+        if (parts.length !== 4) return false;
+        const [, iterationsStr, saltHex, expectedHashHex] = parts;
+        const iterations = parseInt(iterationsStr, 10);
+        if (!iterations || iterations < 1000 || iterations > 1000000) return false;
+
+        const encoder = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+            'raw',
+            encoder.encode(password),
+            { name: 'PBKDF2' },
+            false,
+            ['deriveBits']
+        );
+        const derivedBits = await crypto.subtle.deriveBits(
+            {
+                name: 'PBKDF2',
+                salt: encoder.encode(saltHex),
+                iterations,
+                hash: 'SHA-256'
+            },
+            keyMaterial,
+            256
+        );
+        const computedHashHex = Array.from(new Uint8Array(derivedBits)).map(b => b.toString(16).padStart(2, '0')).join('');
+        return constantTimeEqual(computedHashHex, expectedHashHex);
+    }
 
     if (storedHash.includes(':')) {
         const [saltHex, expectedHashHex] = storedHash.split(':');
-        const computed = await hashPassword(password, saltHex);
+        const computed = await hashPassword(password, saltHex, true);
         const [, computedHashHex] = computed.split(':');
-        return computedHashHex === expectedHashHex;
+        return constantTimeEqual(computedHashHex, expectedHashHex);
     }
 
-    return password === storedHash;
+    return false;
+}
+
+/**
+ * Signs a stateless HMAC-SHA256 authentication token for promoter sessions.
+ */
+export async function signAuthToken(payload, secret) {
+    const signingSecret = secret || 'vtix-default-edge-hmac-secret-change-in-prod';
+    const encoder = new TextEncoder();
+    const headerB64 = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const bodyB64 = btoa(JSON.stringify({
+        ...payload,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7 // 7 days
+    })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const key = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(signingSecret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    const sigBuf = await crypto.subtle.sign('HMAC', key, encoder.encode(`${headerB64}.${bodyB64}`));
+    const sigHex = Array.from(new Uint8Array(sigBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    return `${headerB64}.${bodyB64}.${sigHex}`;
+}
+
+export async function verifyAuthToken(token, secret) {
+    if (!token || typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [headerB64, bodyB64, sigHex] = parts;
+
+    const signingSecret = secret || 'vtix-default-edge-hmac-secret-change-in-prod';
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(signingSecret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+    );
+    const expectedBuf = await crypto.subtle.sign('HMAC', key, encoder.encode(`${headerB64}.${bodyB64}`));
+    const expectedHex = Array.from(new Uint8Array(expectedBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    if (!constantTimeEqual(sigHex, expectedHex)) return null;
+
+    try {
+        let base64 = bodyB64.replace(/-/g, '+').replace(/_/g, '/');
+        while (base64.length % 4) base64 += '=';
+        const payload = JSON.parse(atob(base64));
+        if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
+            return null;
+        }
+        return payload;
+    } catch {
+        return null;
+    }
 }
 
 export function getSecurityHeaders(request) {

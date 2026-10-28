@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import QRCode from 'qrcode';
 import { generateApplePassData, generateGoogleWalletPassData, downloadPassJson } from '../utils/wallet';
 
@@ -6,29 +6,35 @@ export default function WalletModal({ isOpen, onClose, walletType, order, ticket
     const [qrUrl, setQrUrl] = useState('');
     const [downloaded, setDownloaded] = useState(false);
 
-    if (!isOpen || !order) return null;
-
-    const currentTicket = ticket || (order.tickets && order.tickets[0]) || {
-        ticketId: `${order.orderId}-01`,
-        name: (order.items && order.items[0]?.name) || 'General Admission',
+    const currentTicket = ticket || (order?.tickets && order.tickets[0]) || {
+        ticketId: `${order?.orderId || '0'}-01`,
+        name: (order?.items && order.items[0]?.name) || 'General Admission',
         checkInStatus: 'valid'
     };
 
-    const isApple = walletType === 'apple';
-    const passData = isApple
-        ? generateApplePassData({ order, ticket: currentTicket, event })
-        : generateGoogleWalletPassData({ order, ticket: currentTicket, event });
-
-    // Generate QR code if not already set
-    if (!qrUrl) {
+    useEffect(() => {
+        if (!isOpen || !order?.orderId || !currentTicket?.ticketId) return;
+        let isMounted = true;
         const checkinUrl = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket.ticketId}&checkin=1`;
         QRCode.toDataURL(checkinUrl, {
             width: 200,
             margin: 2,
             color: { dark: '#000000', light: '#ffffff' },
             errorCorrectionLevel: 'H'
-        }).then(url => setQrUrl(url)).catch(() => {});
-    }
+        }).then(url => {
+            if (isMounted) setQrUrl(url);
+        }).catch(() => {});
+        return () => {
+            isMounted = false;
+        };
+    }, [isOpen, order?.orderId, currentTicket?.ticketId]);
+
+    if (!isOpen || !order) return null;
+
+    const isApple = walletType === 'apple';
+    const passData = isApple
+        ? generateApplePassData({ order, ticket: currentTicket, event })
+        : generateGoogleWalletPassData({ order, ticket: currentTicket, event });
 
     const handleDownloadJson = () => {
         downloadPassJson(passData, `${isApple ? 'apple-pass' : 'google-wallet'}-${currentTicket.ticketId}.json`);

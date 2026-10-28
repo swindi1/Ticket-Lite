@@ -1,4 +1,13 @@
-import { validateCheckoutPayload, isValidRedirectUrl } from '../../functions/_shared/security.js';
+import {
+    validateCheckoutPayload,
+    isValidRedirectUrl,
+    hashPassword,
+    verifyPassword,
+    signAuthToken,
+    verifyAuthToken
+} from '../../functions/_shared/security.js';
+import { encodePassToken, decodePassToken } from '../../src/utils/passToken.js';
+import { sanitizeCssColor, sanitizeImageUrl, generateSecureOrderId } from '../../src/utils/security.js';
 
 console.log('🔒 RUNNING STRIPE SECURITY & VULNERABILITY AUDIT TEST SUITE...\n');
 
@@ -89,6 +98,40 @@ const testValidOrder = validateCheckoutPayload({
     ]
 });
 assert('Validates legitimate order successfully', testValidOrder.isValid === true && testValidOrder.subtotal === 210.00);
+
+// Test 9: PBKDF2-SHA256 Password Hashing & Constant-Time Verification
+const pbkdf2Hash = await hashPassword('SafePass123!');
+assert('Generates PBKDF2 password hash format', pbkdf2Hash.startsWith('pbkdf2:100000:'));
+assert('Verifies valid PBKDF2 password', (await verifyPassword('SafePass123!', pbkdf2Hash)) === true);
+assert('Rejects wrong PBKDF2 password', (await verifyPassword('WrongPass123!', pbkdf2Hash)) === false);
+assert('Rejects plaintext fallback match', (await verifyPassword('plaintext', 'plaintext')) === false);
+
+// Test 10: Signed Session Token (HMAC-SHA256)
+const jwt = await signAuthToken({ sub: 'promoter-1', email: 'promoter@vtix.com' }, 'test-secret-key');
+const verifiedJwt = await verifyAuthToken(jwt, 'test-secret-key');
+const forgedJwt = await verifyAuthToken(jwt + 'a', 'test-secret-key');
+assert('Signs and verifies valid HMAC-SHA256 session token', verifiedJwt?.sub === 'promoter-1');
+assert('Rejects tampered HMAC-SHA256 session token', forgedJwt === null);
+
+// Test 11: Pass Token Integrity & Anti-Forgery
+const validPassToken = encodePassToken({
+    orderId: '987654321098',
+    eventId: '1',
+    eventTitle: 'Neon Nights',
+    customer: { name: 'Tyler', email: 'promoter@vtix.com' },
+    items: [{ name: 'VIP', price: 150, quantity: 1 }],
+    total: 150
+});
+const decodedPass = decodePassToken(validPassToken);
+assert('Decodes valid integrity-signed pass token', decodedPass?.orderId === '987654321098');
+const rawFakeToken = btoa(JSON.stringify({ orderId: '987654321098', items: [{ name: 'Free VIP', price: 0 }] }));
+assert('Rejects unsigned/forged pass token', decodePassToken(rawFakeToken) === null);
+
+// Test 12: CSS & Image URL Sanitization + CSPRNG Order ID
+assert('Sanitizes malicious CSS injection in color', sanitizeCssColor('rgb(0,0,0); background:url(evil)', 'rgb(1, 2, 3)') === 'rgb(1, 2, 3)');
+assert('Allows valid rgb() CSS color', sanitizeCssColor('rgb(236, 72, 153)') === 'rgb(236, 72, 153)');
+assert('Rejects CSS injection in image URL', sanitizeImageUrl('https://example.com/a.png"); background:red;') === null);
+assert('Generates valid 12-digit CSPRNG orderId', /^\d{12}$/.test(generateSecureOrderId()));
 
 console.log(`\n========================================`);
 console.log(`TOTAL TESTS: ${testsPassed + testsFailed} | PASSED: ${testsPassed} | FAILED: ${testsFailed}`);
