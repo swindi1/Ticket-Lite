@@ -10,7 +10,7 @@ import { generateSecureOrderId, sanitizeCssColor } from '../utils/security';
 export default function EventPage() {
     const { eventId } = useParams();
     const [searchParams] = useSearchParams();
-    const { events, orders, cart, addToCart, updateQuantity, removeFromCart, clearCart, recordOrder } = useEventData();
+    const { events, cart, addToCart, updateQuantity, removeFromCart, clearCart, recordOrder } = useEventData();
     const [isCartOpen, setIsCartOpen] = useState(false);
     const [isCheckingOut, setIsCheckingOut] = useState(false);
     const [success, setSuccess] = useState(false);
@@ -29,41 +29,36 @@ export default function EventPage() {
         return () => clearInterval(interval);
     }, []);
 
-    // Handle return redirect from Stripe Checkout
+    // Handle return redirect from Stripe Checkout (verified against D1 /api/tickets/verify)
     useEffect(() => {
         const paymentParam = searchParams.get('payment');
         const returnOrderId = searchParams.get('order_id');
+        const sessionId = searchParams.get('session_id') || '';
 
         if (paymentParam === 'success' && returnOrderId && event) {
-            const existing = (orders || []).find(o => o.orderId === returnOrderId);
-            if (existing) {
-                setTimeout(() => {
-                    setLastOrder(existing);
+            let isCancelled = false;
+            fetch(`/api/tickets/verify?orderId=${encodeURIComponent(returnOrderId)}&session_id=${encodeURIComponent(sessionId)}`)
+                .then(res => (res.ok ? res.json() : null))
+                .then(data => {
+                    if (isCancelled || !data?.order) return;
+                    const saved = recordOrder(data.order);
+                    setLastOrder(saved);
                     setSuccess(true);
                     setIsCartOpen(true);
-                }, 0);
-            } else {
-                const pending = sessionStorage.getItem(`pending_order_${returnOrderId}`);
-                if (pending) {
-                    try {
-                        const parsed = JSON.parse(pending);
-                        const saved = recordOrder(parsed);
-                        setTimeout(() => {
-                            setLastOrder(saved);
-                            setSuccess(true);
-                            setIsCartOpen(true);
-                        }, 0);
-                        sessionStorage.removeItem(`pending_order_${returnOrderId}`);
-                        clearCart();
-                        emailService.sendTicketConfirmationEmail(saved, event);
-                    } catch (err) {
-                        console.error('Failed to parse pending order:', err);
-                    }
-                }
-            }
+                    setEmailStatus({ loading: false, sent: true, error: null });
+                    sessionStorage.removeItem(`pending_order_${returnOrderId}`);
+                    clearCart();
+                })
+                .catch(err => {
+                    console.error('Failed to verify paid order from server:', err);
+                });
+
             window.history.replaceState({}, document.title, window.location.pathname);
+            return () => {
+                isCancelled = true;
+            };
         }
-    }, [searchParams, orders, event, clearCart, recordOrder]);
+    }, [searchParams, event, clearCart, recordOrder]);
 
     const themeColors = event?.palette || { palette: [] };
     const safeDominant = sanitizeCssColor(themeColors.dominant, '');
@@ -124,36 +119,15 @@ export default function EventPage() {
                 cancelUrl: `${origin}/event/${event.id}?payment=cancelled`
             });
 
-            // If server rejected checkout (rate limiting, validation, tampered input), halt and alert
-            if (!stripeRes.success) {
+            // Fail closed: require live Stripe Checkout URL (never confirm orders without payment)
+            if (!stripeRes.success || !stripeRes.url) {
                 setIsCheckingOut(false);
                 alert(stripeRes.error || 'Unable to proceed with checkout. Please verify your order details.');
                 return;
             }
 
-            // If live Stripe Checkout session was returned, redirect buyer to Stripe
-            if (stripeRes.url && stripeRes.mode === 'live') {
-                sessionStorage.setItem(`pending_order_${orderId}`, JSON.stringify(orderRecord));
-                // Order is recorded only after verified payment return in the useEffect above
-                window.location.assign(stripeRes.url);
-                return;
-            }
-
-            // Fallback instant confirmation in test/mock mode
-            const savedOrder = recordOrder(orderRecord);
-            setLastOrder(savedOrder);
-            setIsCheckingOut(false);
-            setSuccess(true);
-            clearCart();
-
-            // Automatically send ticket passes & receipt via Resend
-            setEmailStatus({ loading: true, sent: false, error: null });
-            const emailResult = await emailService.sendTicketConfirmationEmail(savedOrder, event);
-            if (emailResult.success) {
-                setEmailStatus({ loading: false, sent: true, error: null });
-            } else {
-                setEmailStatus({ loading: false, sent: false, error: emailResult.error });
-            }
+            sessionStorage.setItem(`pending_order_${orderId}`, JSON.stringify(orderRecord));
+            window.location.assign(stripeRes.url);
         } catch (err) {
             console.error('Checkout processing error:', err);
             setIsCheckingOut(false);
@@ -501,7 +475,7 @@ export default function EventPage() {
 
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                         <Link
-                                            to={`/tickets/${lastOrder.orderId}`}
+                                            to={lastOrder.passToken ? `/tickets/${lastOrder.orderId}?pass=${encodeURIComponent(lastOrder.passToken)}` : `/tickets/${lastOrder.orderId}`}
                                             className="btn btn-primary"
                                             style={{ width: '100%', padding: '14px', fontSize: '1rem', textDecoration: 'none', boxSizing: 'border-box' }}
                                         >
@@ -512,7 +486,9 @@ export default function EventPage() {
                                             type="button"
                                             className="btn"
                                             onClick={() => {
-                                                const url = `${window.location.origin}/tickets/${lastOrder.orderId}`;
+                                                const url = lastOrder.passToken
+                                                    ? `${window.location.origin}/tickets/${lastOrder.orderId}?pass=${encodeURIComponent(lastOrder.passToken)}`
+                                                    : `${window.location.origin}/tickets/${lastOrder.orderId}`;
                                                 navigator.clipboard.writeText(url);
                                                 setCopiedTicketLink(true);
                                                 setTimeout(() => setCopiedTicketLink(false), 2000);

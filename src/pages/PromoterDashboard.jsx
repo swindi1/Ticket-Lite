@@ -30,7 +30,9 @@ export default function PromoterDashboard() {
     const [formData, setFormData] = useState({
         title: '',
         date: '',
-        location: ''
+        location: '',
+        currency: currentPromoter?.default_currency || 'cad',
+        stripeAccountId: currentPromoter?.stripe_account_id || ''
     });
 
     const [ticketClasses, setTicketClasses] = useState(DEFAULT_TICKETS);
@@ -134,7 +136,9 @@ export default function PromoterDashboard() {
         setFormData({
             title: eventToEdit.title || '',
             date: eventToEdit.date || '',
-            location: eventToEdit.location || ''
+            location: eventToEdit.location || '',
+            currency: eventToEdit.currency || currentPromoter?.default_currency || 'cad',
+            stripeAccountId: eventToEdit.stripeAccountId || currentPromoter?.stripe_account_id || ''
         });
         setImageSrc(eventToEdit.image || null);
         setThemeColors(eventToEdit.palette || { dominant: '', palette: [] });
@@ -163,17 +167,23 @@ export default function PromoterDashboard() {
             title: formData.title || 'Untitled Event',
             date: formData.date || '',
             location: formData.location || 'Location TBA',
+            currency: (formData.currency || 'cad').toLowerCase(),
+            stripeAccountId: formData.stripeAccountId ? formData.stripeAccountId.trim() : null,
             image: sanitizeImageUrl(imageSrc),
             palette: themeColors.palette.length > 0 ? themeColors : null,
-            tickets: ticketClasses.filter(t => t.name.trim() !== '').map((t, idx) => ({
-                id: `t_${Date.now()}_${idx}`,
-                name: t.name,
-                note: (t.note || '').slice(0, 1000),
-                price: parseFloat(t.price) || 0,
-                quantity: parseInt(t.quantity) || 0,
-                onSaleDate: t.onSaleDate || null,
-                timezone: t.timezone || 'UTC'
-            })),
+            tickets: ticketClasses.filter(t => t.name.trim() !== '').map((t, idx) => {
+                const priceCents = Math.max(50, Math.round((parseFloat(t.price) || 0) * 100));
+                return {
+                    id: `t_${Date.now()}_${idx}`,
+                    name: t.name,
+                    note: (t.note || '').slice(0, 1000),
+                    price_cents: priceCents,
+                    price: priceCents / 100,
+                    quantity: parseInt(t.quantity, 10) || 0,
+                    onSaleDate: t.onSaleDate || null,
+                    timezone: t.timezone || 'UTC'
+                };
+            }),
             fees: fees.filter(f => f.name.trim() !== '').map(f => ({
                 id: f.id,
                 name: f.name,
@@ -200,7 +210,13 @@ export default function PromoterDashboard() {
     const resetForm = () => {
         setIsCreating(false);
         setEditingEventId(null);
-        setFormData({ title: '', date: '', location: '' });
+        setFormData({
+            title: '',
+            date: '',
+            location: '',
+            currency: currentPromoter?.default_currency || 'cad',
+            stripeAccountId: currentPromoter?.stripe_account_id || ''
+        });
         setTicketClasses(DEFAULT_TICKETS);
         setFees(DEFAULT_FEES);
         setImageSrc(null);
@@ -368,6 +384,33 @@ export default function PromoterDashboard() {
                                     onChange={(e) => setFormData({ ...formData, location: e.target.value })}
                                     style={{ width: '100%', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff' }}
                                     placeholder="e.g. The Grand Arena"
+                                />
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '24px' }}>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Settlement Currency</label>
+                                <select
+                                    value={formData.currency}
+                                    onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                                    style={{ width: '100%', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff' }}
+                                >
+                                    <option style={{ color: '#000' }} value="cad">CAD ($)</option>
+                                    <option style={{ color: '#000' }} value="usd">USD ($)</option>
+                                    <option style={{ color: '#000' }} value="eur">EUR (€)</option>
+                                    <option style={{ color: '#000' }} value="gbp">GBP (£)</option>
+                                    <option style={{ color: '#000' }} value="aud">AUD ($)</option>
+                                </select>
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-muted)' }}>Stripe Connect Account ID (Promoter Payout)</label>
+                                <input
+                                    type="text"
+                                    value={formData.stripeAccountId}
+                                    onChange={(e) => setFormData({ ...formData, stripeAccountId: e.target.value })}
+                                    style={{ width: '100%', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: '#fff' }}
+                                    placeholder="acct_1234567890ABCDEF"
                                 />
                             </div>
                         </div>

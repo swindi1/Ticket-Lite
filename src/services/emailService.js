@@ -1,29 +1,24 @@
 /**
- * emailService.js - Client-side service to trigger ticket emails via Resend API
+ * emailService.js - Client-side service to trigger ticket confirmation emails via /api/tickets/send-email.
+ * The server verifies the order against Cloudflare D1 (payment_status = 'paid') and uses canonical order data.
  */
 
 import { getGoogleCalendarUrl } from '../utils/calendar';
-import { encodePassToken } from '../utils/passToken';
+import { getServerPassToken } from '../utils/passToken';
 
 export const emailService = {
     /**
-     * Sends ticket confirmation email to customer upon successful checkout.
+     * Requests a ticket confirmation email resend for a verified paid order.
      */
     async sendTicketConfirmationEmail(order, event, origin = null) {
-        if (!order || !order.customer?.email) {
-            return { success: false, error: 'No customer email provided.' };
+        if (!order || !order.orderId) {
+            return { success: false, error: 'Valid Order ID is required.' };
         }
 
         const siteOrigin = origin || (typeof window !== 'undefined' ? window.location.origin : 'https://ticketlite.ca');
-        const passToken = encodePassToken({
-            ...order,
-            eventTitle: order.eventTitle || event?.title,
-            eventDate: order.eventDate || event?.date,
-            eventLocation: order.eventLocation || event?.location,
-            eventPalette: order.eventPalette || event?.palette
-        });
+        const passToken = getServerPassToken(order);
         const ticketUrl = passToken
-            ? `${siteOrigin}/tickets/${order.orderId}?pass=${passToken}`
+            ? `${siteOrigin}/tickets/${order.orderId}?pass=${encodeURIComponent(passToken)}`
             : `${siteOrigin}/tickets/${order.orderId}`;
 
         const googleCalUrl = getGoogleCalendarUrl({
@@ -34,44 +29,37 @@ export const emailService = {
             ticketUrl
         });
 
-        const payload = {
-            orderId: order.orderId,
-            eventTitle: order.eventTitle || event?.title,
-            eventDate: event?.date || '',
-            eventLocation: event?.location || '',
-            customerName: order.customer.name,
-            customerEmail: order.customer.email.trim(),
-            items: order.items || [],
-            baseTotal: order.baseTotal || 0,
-            fees: order.fees || [],
-            total: order.total || 0,
-            ticketUrl,
-            googleCalendarUrl: googleCalUrl
-        };
+        let authToken = null;
+        try {
+            const savedPromoter = localStorage.getItem('vtix_current_promoter');
+            if (savedPromoter) {
+                authToken = JSON.parse(savedPromoter)?.token || null;
+            }
+        } catch {
+            authToken = null;
+        }
 
         try {
             const res = await fetch('/api/tickets/send-email', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {})
                 },
-                body: JSON.stringify(payload)
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    orderId: order.orderId,
+                    passToken,
+                    googleCalendarUrl: googleCalUrl
+                })
             });
 
             const data = await res.json().catch(() => ({}));
 
             if (!res.ok) {
-                let errorMsg = data.error;
-                if (!errorMsg) {
-                    if (res.status === 405) {
-                        errorMsg = 'API endpoint not supported on this preview host (405). Please ensure you are viewing the live Cloudflare Pages URL.';
-                    } else {
-                        errorMsg = `Server responded with status ${res.status}`;
-                    }
-                }
                 return {
                     success: false,
-                    error: errorMsg
+                    error: data.error || `Server responded with status ${res.status}`
                 };
             }
 
@@ -81,7 +69,6 @@ export const emailService = {
                 recipient: data.recipient
             };
         } catch (err) {
-            console.warn('Ticket email fetch exception (expected in pure local offline dev):', err);
             return {
                 success: false,
                 error: err.message || 'Network error while attempting to dispatch email.'

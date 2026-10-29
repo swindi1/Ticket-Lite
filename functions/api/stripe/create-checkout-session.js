@@ -1,5 +1,11 @@
 import Stripe from 'stripe';
-import { getSecurityHeaders, checkRateLimit, validateCheckoutPayload, isValidRedirectUrl } from '../../_shared/security.js';
+import {
+    getSecurityHeaders,
+    checkRateLimit,
+    validateCheckoutPayload,
+    isValidRedirectUrl,
+    computeCanonicalCheckout
+} from '../../_shared/security.js';
 
 export async function onRequestOptions(context) {
     return new Response(null, {
@@ -56,9 +62,6 @@ export async function onRequestPost(context) {
         const {
             orderId,
             eventId,
-            eventTitle,
-            eventDate,
-            eventLocation,
             customer,
             items = [],
             fees = [],
@@ -66,7 +69,7 @@ export async function onRequestPost(context) {
             cancelUrl
         } = body;
 
-        // 2. Comprehensive Security Validation (Anti-Price-Tampering, Anti-Negative-Charges, Anti-Bot-Flooding)
+        // 2. Input format & anti-tampering validation
         const validation = validateCheckoutPayload({ orderId, eventId, customer, items, fees });
         if (!validation.isValid) {
             return new Response(
@@ -75,8 +78,9 @@ export async function onRequestPost(context) {
             );
         }
 
-        // 3. Customer Email Rate Limiting (Prevents Card Testing Bot Probing against single emails)
-        const emailRateCheck = checkRateLimit(`stripe-checkout-email:${customer.email.trim().toLowerCase()}`, 6, 5 * 60 * 1000);
+        // 3. Customer Email Rate Limiting
+        const cleanEmail = customer.email.trim().toLowerCase();
+        const emailRateCheck = checkRateLimit(`stripe-checkout-email:${cleanEmail}`, 6, 5 * 60 * 1000);
         if (!emailRateCheck.allowed) {
             return new Response(
                 JSON.stringify({
@@ -90,16 +94,103 @@ export async function onRequestPost(context) {
             );
         }
 
-        const rawApiKey = context.env?.STRIPE_SECRET_KEY ||
-            context.env?.stripe_secret_key ||
-            context.env?.STRIPE_KEY ||
-            (typeof globalThis !== 'undefined' && (globalThis.STRIPE_SECRET_KEY || globalThis.stripe_secret_key));
+        // 4. Fail-closed check for Stripe API Key (no mock confirmation fallback)
+        const rawApiKey = context.env?.STRIPE_SECRET_KEY || context.env?.stripe_secret_key;
         const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim().replace(/^["']|["']$/g, '') : null;
+        if (!apiKey) {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: 'Payment processing is currently unavailable (STRIPE_SECRET_KEY is not configured).'
+                }),
+                { status: 503, headers }
+            );
+        }
 
+        // 5. Fail-closed check for D1 Database and canonical event lookup
+        const db = context.env?.DB;
+        if (!db) {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: 'Database binding (DB) is not configured. Cannot verify event pricing.'
+                }),
+                { status: 503, headers }
+            );
+        }
+
+        let dbEvent;
+        try {
+            dbEvent = await db
+                .prepare(`
+                    SELECT
+                        e.id,
+                        e.promoter_id,
+                        e.title,
+                        e.date,
+                        e.location,
+                        e.currency,
+                        e.stripe_account_id AS event_stripe_account_id,
+                        e.tickets_json,
+                        e.fees_json,
+                        p.stripe_account_id AS promoter_stripe_account_id,
+                        p.default_currency AS promoter_currency
+                    FROM events e
+                    LEFT JOIN promoter_accounts p ON e.promoter_id = p.id
+                    WHERE e.id = ?
+                `)
+                .bind(String(eventId))
+                .first();
+        } catch (dbErr) {
+            console.error('Database error while fetching event for checkout:', dbErr);
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: 'Unable to verify event pricing due to a database error.'
+                }),
+                { status: 500, headers }
+            );
+        }
+
+        if (!dbEvent) {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: 'Event not found in database. Checkout requires a published server event.'
+                }),
+                { status: 404, headers }
+            );
+        }
+
+        // 6. Fail-closed server-side canonical price AND fee calculation in integer cents
+        const canonical = computeCanonicalCheckout(
+            {
+                ...dbEvent,
+                currency: dbEvent.currency || dbEvent.promoter_currency || 'cad'
+            },
+            items,
+            fees
+        );
+        if (!canonical.isValid) {
+            return new Response(
+                JSON.stringify({ success: false, error: canonical.error }),
+                { status: 400, headers }
+            );
+        }
+
+        const {
+            currency,
+            verifiedItems,
+            verifiedFees,
+            baseTotalCents,
+            totalFeesCents,
+            totalAmountCents
+        } = canonical;
+
+        // 7. Open Redirect Prevention: Validate success and cancel URLs against allowed platform domains
         const rawOrigin = context.request.headers.get('Origin') || 'https://ticketlite.ca';
         const origin = isValidRedirectUrl(rawOrigin) ? rawOrigin : 'https://ticketlite.ca';
 
-        // 4. Open Redirect Prevention: Validate success and cancel URLs against allowed platform domains
         let safeSuccessUrl = `${origin}/event/${encodeURIComponent(eventId)}?session_id={CHECKOUT_SESSION_ID}&order_id=${encodeURIComponent(orderId)}&payment=success`;
         let safeCancelUrl = `${origin}/event/${encodeURIComponent(eventId)}?payment=cancelled`;
 
@@ -110,100 +201,55 @@ export async function onRequestPost(context) {
             safeCancelUrl = cancelUrl;
         }
 
-        // 4b. Server-side canonical price verification if event exists in D1 database
-        let verifiedItems = items;
-        let verifiedFees = fees;
-        const db = context.env?.DB;
-        if (db) {
-            try {
-                const dbEvent = await db
-                    .prepare('SELECT title, tickets_json, fees_json FROM events WHERE id = ?')
-                    .bind(String(eventId))
-                    .first();
-                if (dbEvent && dbEvent.tickets_json) {
-                    const canonicalTickets = JSON.parse(dbEvent.tickets_json);
-                    if (Array.isArray(canonicalTickets) && canonicalTickets.length > 0) {
-                        for (const item of items) {
-                            const matchedTier = canonicalTickets.find(
-                                t => String(t.name).trim().toLowerCase() === String(item.name).trim().toLowerCase()
-                            );
-                            if (!matchedTier) {
-                                return new Response(
-                                    JSON.stringify({ success: false, error: `Unknown ticket tier "${item.name}".` }),
-                                    { status: 400, headers }
-                                );
-                            }
-                            const expectedPrice = Number(matchedTier.price);
-                            if (Math.abs(Number(item.price) - expectedPrice) > 0.01) {
-                                return new Response(
-                                    JSON.stringify({ success: false, error: `Price mismatch detected for "${item.name}".` }),
-                                    { status: 400, headers }
-                                );
-                            }
-                        }
-                    }
-                }
-            } catch (dbErr) {
-                console.warn('D1 event lookup notice:', dbErr);
-            }
-        }
-
-        // Fallback / mock simulation if Stripe secret key is not set yet in Cloudflare
-        if (!apiKey) {
-            return new Response(
-                JSON.stringify({
-                    success: true,
-                    mode: 'mock',
-                    message: 'Stripe secret key not configured in Cloudflare environment. Running in instant-confirmation test mode.',
-                    orderId,
-                    mockCheckout: true
-                }),
-                { status: 200, headers }
-            );
-        }
-
-        // 5. Initialize Stripe with Cloudflare Workers fetch client
+        // 8. Initialize Stripe with Cloudflare Workers fetch client
         const stripe = new Stripe(apiKey, {
             httpClient: Stripe.createFetchHttpClient(),
             apiVersion: '2025-02-24.acacia'
         });
 
-        // 6. Build strictly validated Stripe line items
+        // 9. Build Stripe line items strictly from server-verified integer cents
         const lineItems = verifiedItems.map(item => ({
             price_data: {
-                currency: 'usd',
+                currency,
                 product_data: {
-                    name: `${String(eventTitle || 'Event Ticket').slice(0, 80)} - ${String(item.name).slice(0, 50)}`,
+                    name: `${String(dbEvent.title || 'Event Ticket').slice(0, 80)} - ${String(item.name).slice(0, 50)}`,
                     description: item.note ? String(item.note).slice(0, 300) : undefined
                 },
-                unit_amount: Math.round(Number(item.price) * 100)
+                unit_amount: item.priceCents
             },
-            quantity: Math.max(1, parseInt(item.quantity, 10) || 1)
+            quantity: item.quantity
         }));
 
-        // Add fee line items if applicable (strictly non-negative)
-        if (Array.isArray(verifiedFees)) {
-            verifiedFees.forEach(fee => {
-                const amountCents = Math.round(Number(fee.amount) * 100);
-                if (amountCents > 0) {
-                    lineItems.push({
-                        price_data: {
-                            currency: 'usd',
-                            product_data: {
-                                name: String(fee.name || 'Service & Processing Fee').slice(0, 60)
-                            },
-                            unit_amount: amountCents
+        verifiedFees.forEach(fee => {
+            if (fee.amountCents > 0) {
+                lineItems.push({
+                    price_data: {
+                        currency,
+                        product_data: {
+                            name: String(fee.name || 'Service & Processing Fee').slice(0, 60)
                         },
-                        quantity: 1
-                    });
-                }
-            });
+                        unit_amount: fee.amountCents
+                    },
+                    quantity: 1
+                });
+            }
+        });
+
+        // 10. Configure Stripe Connect destination settlement for the promoter
+        const destinationAccount = dbEvent.event_stripe_account_id || dbEvent.promoter_stripe_account_id || null;
+        if (context.env?.STRIPE_REQUIRE_CONNECT === 'true' && !destinationAccount) {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    error: 'Promoter has not connected a Stripe payout account for this event.'
+                }),
+                { status: 400, headers }
+            );
         }
 
-        // Create Stripe Checkout Session
-        const session = await stripe.checkout.sessions.create({
+        const sessionParams = {
             payment_method_types: ['card'],
-            customer_email: customer.email.trim().toLowerCase(),
+            customer_email: cleanEmail,
             line_items: lineItems,
             mode: 'payment',
             success_url: safeSuccessUrl,
@@ -211,17 +257,60 @@ export async function onRequestPost(context) {
             client_reference_id: orderId,
             metadata: {
                 orderId,
-                eventId: String(eventId),
-                eventTitle: String(eventTitle || ''),
-                eventDate: String(eventDate || ''),
-                eventLocation: String(eventLocation || ''),
-                customerName: String(customer.name || ''),
-                customerEmail: String(customer.email || ''),
-                customerPhone: String(customer.phone || ''),
-                itemsJson: JSON.stringify(items).slice(0, 500),
-                feesJson: JSON.stringify(fees).slice(0, 500)
+                eventId: String(dbEvent.id),
+                promoterId: String(dbEvent.promoter_id || ''),
+                eventTitle: String(dbEvent.title || '').slice(0, 120),
+                eventDate: String(dbEvent.date || '').slice(0, 80),
+                eventLocation: String(dbEvent.location || '').slice(0, 120),
+                currency,
+                customerName: String(customer.name || '').trim().slice(0, 100),
+                customerEmail: cleanEmail,
+                customerPhone: String(customer.phone || '').trim().slice(0, 25),
+                baseTotalCents: String(baseTotalCents),
+                totalFeesCents: String(totalFeesCents),
+                totalAmountCents: String(totalAmountCents),
+                itemsJson: JSON.stringify(verifiedItems).slice(0, 500),
+                feesJson: JSON.stringify(verifiedFees).slice(0, 500)
             }
-        });
+        };
+
+        if (destinationAccount && /^acct_[a-zA-Z0-9]{8,32}$/.test(destinationAccount)) {
+            sessionParams.payment_intent_data = {
+                transfer_data: {
+                    destination: destinationAccount
+                },
+                ...(totalFeesCents > 0 ? { application_fee_amount: totalFeesCents } : {})
+            };
+        }
+
+        const session = await stripe.checkout.sessions.create(sessionParams);
+
+        // 11. Pre-record order in D1 with payment_status = 'pending' (webhook marks 'paid' upon verified payment)
+        await db
+            .prepare(`
+                INSERT INTO orders (
+                    order_id, event_id, promoter_id, customer_name, customer_email, customer_phone,
+                    currency, items_json, base_total_cents, fees_json, total_amount_cents,
+                    stripe_session_id, stripe_destination_account, payment_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            `)
+            .bind(
+                orderId,
+                String(dbEvent.id),
+                dbEvent.promoter_id || null,
+                customer.name.trim(),
+                cleanEmail,
+                customer.phone ? customer.phone.trim() : null,
+                currency,
+                JSON.stringify(verifiedItems),
+                baseTotalCents,
+                JSON.stringify(verifiedFees),
+                totalAmountCents,
+                session.id,
+                destinationAccount,
+                new Date().toISOString()
+            )
+            .run();
 
         return new Response(
             JSON.stringify({
@@ -229,7 +318,9 @@ export async function onRequestPost(context) {
                 mode: 'live',
                 url: session.url,
                 sessionId: session.id,
-                orderId
+                orderId,
+                currency,
+                totalAmountCents
             }),
             { status: 200, headers }
         );

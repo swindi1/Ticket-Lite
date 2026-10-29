@@ -1,4 +1,4 @@
-import { validateLoginInputs, verifyPassword, hashPassword, signAuthToken, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
+import { validateLoginInputs, verifyPassword, signAuthToken, getAuthSecret, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
 
 export async function onRequestOptions(context) {
     return new Response(null, {
@@ -48,7 +48,7 @@ export async function onRequestPost(context) {
             });
         }
 
-        // 3. Verify Cloudflare D1 database binding
+        // 3. Verify Cloudflare D1 database binding and AUTH_SECRET (fail closed)
         const db = context.env?.DB;
         if (!db) {
             return new Response(
@@ -57,11 +57,19 @@ export async function onRequestPost(context) {
             );
         }
 
+        const authSecret = getAuthSecret(context.env);
+        if (!authSecret) {
+            return new Response(
+                JSON.stringify({ error: 'Authentication secret (AUTH_SECRET) is not configured on the server.' }),
+                { status: 503, headers }
+            );
+        }
+
         const normalizedEmail = email.trim().toLowerCase();
 
         // 4. Query promoter account using prepared statement
         const account = await db
-            .prepare('SELECT id, name, organization_name, phone_number, email, password_hash, created_at FROM promoter_accounts WHERE email = ?')
+            .prepare('SELECT id, name, organization_name, phone_number, email, password_hash, stripe_account_id, default_currency, created_at FROM promoter_accounts WHERE email = ?')
             .bind(normalizedEmail)
             .first();
 
@@ -73,7 +81,7 @@ export async function onRequestPost(context) {
             );
         }
 
-        // 5. Cryptographic password verification (PBKDF2 / legacy salted SHA-256)
+        // 5. Cryptographic password verification (strictly PBKDF2-SHA256)
         const isMatch = await verifyPassword(password, account.password_hash);
         if (!isMatch) {
             return new Response(
@@ -82,29 +90,17 @@ export async function onRequestPost(context) {
             );
         }
 
-        // Transparently upgrade legacy single-round SHA-256 hashes to PBKDF2-SHA256
-        if (account.password_hash && !account.password_hash.startsWith('pbkdf2:')) {
-            try {
-                const upgradedHash = await hashPassword(password);
-                await db
-                    .prepare('UPDATE promoter_accounts SET password_hash = ?, updated_at = ? WHERE id = ?')
-                    .bind(upgradedHash, new Date().toISOString(), account.id)
-                    .run();
-            } catch (upgradeErr) {
-                console.warn('Password hash upgrade warning:', upgradeErr);
-            }
-        }
-
         const promoterAccount = {
             id: account.id,
             name: account.name,
             organization_name: account.organization_name,
             phone_number: account.phone_number,
             email: account.email,
+            stripe_account_id: account.stripe_account_id || null,
+            default_currency: account.default_currency || 'cad',
             created_at: account.created_at
         };
 
-        const authSecret = context.env?.AUTH_SECRET || context.env?.STRIPE_WEBHOOK_SECRET;
         const token = await signAuthToken({ sub: account.id, email: account.email }, authSecret);
 
         return new Response(JSON.stringify({ success: true, promoter: promoterAccount, token }), {

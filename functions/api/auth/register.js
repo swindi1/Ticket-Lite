@@ -1,4 +1,4 @@
-import { validatePromoterRegistration, hashPassword, signAuthToken, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
+import { validatePromoterRegistration, validateCurrency, hashPassword, signAuthToken, getAuthSecret, getSecurityHeaders, checkRateLimit } from '../../_shared/security.js';
 
 export async function onRequestOptions(context) {
     return new Response(null, {
@@ -37,7 +37,7 @@ export async function onRequestPost(context) {
             });
         }
 
-        const { name, organizationName, phoneNumber, email, password } = body;
+        const { name, organizationName, phoneNumber, email, password, stripeAccountId, defaultCurrency } = body;
 
         // 1. Strict SQL-injection validation & password policy
         const validation = validatePromoterRegistration({ name, organizationName, phoneNumber, email, password });
@@ -48,11 +48,38 @@ export async function onRequestPost(context) {
             });
         }
 
-        // 2. Verify Cloudflare D1 database binding
+        let cleanStripeAccountId = null;
+        if (stripeAccountId && typeof stripeAccountId === 'string' && stripeAccountId.trim() !== '') {
+            if (!/^acct_[a-zA-Z0-9]{8,32}$/.test(stripeAccountId.trim())) {
+                return new Response(
+                    JSON.stringify({ error: 'Invalid Stripe Connect account ID format (must start with acct_).' }),
+                    { status: 400, headers }
+                );
+            }
+            cleanStripeAccountId = stripeAccountId.trim();
+        }
+
+        const cleanCurrency = validateCurrency(defaultCurrency || 'cad');
+        if (!cleanCurrency) {
+            return new Response(
+                JSON.stringify({ error: 'Unsupported currency code.' }),
+                { status: 400, headers }
+            );
+        }
+
+        // 2. Verify Cloudflare D1 database binding and AUTH_SECRET (fail closed)
         const db = context.env?.DB;
         if (!db) {
             return new Response(
                 JSON.stringify({ error: 'Cloudflare D1 Database binding (DB) is not attached.' }),
+                { status: 503, headers }
+            );
+        }
+
+        const authSecret = getAuthSecret(context.env);
+        if (!authSecret) {
+            return new Response(
+                JSON.stringify({ error: 'Authentication secret (AUTH_SECRET) is not configured on the server.' }),
                 { status: 503, headers }
             );
         }
@@ -72,7 +99,7 @@ export async function onRequestPost(context) {
             );
         }
 
-        // 4. Generate salted SHA-256 hash
+        // 4. Generate PBKDF2-SHA256 hash
         const passwordHash = await hashPassword(password);
         const promoterId = `promoter_${Date.now()}_${crypto.randomUUID().substring(0, 8)}`;
         const nowIso = new Date().toISOString();
@@ -80,7 +107,7 @@ export async function onRequestPost(context) {
         // 5. Insert new promoter account using prepared statement
         await db
             .prepare(
-                'INSERT INTO promoter_accounts (id, name, organization_name, phone_number, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO promoter_accounts (id, name, organization_name, phone_number, email, password_hash, stripe_account_id, default_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )
             .bind(
                 promoterId,
@@ -89,6 +116,8 @@ export async function onRequestPost(context) {
                 phoneNumber.trim(),
                 normalizedEmail,
                 passwordHash,
+                cleanStripeAccountId,
+                cleanCurrency,
                 nowIso,
                 nowIso
             )
@@ -100,10 +129,11 @@ export async function onRequestPost(context) {
             organization_name: organizationName.trim(),
             phone_number: phoneNumber.trim(),
             email: normalizedEmail,
+            stripe_account_id: cleanStripeAccountId,
+            default_currency: cleanCurrency,
             created_at: nowIso
         };
 
-        const authSecret = context.env?.AUTH_SECRET || context.env?.STRIPE_WEBHOOK_SECRET;
         const token = await signAuthToken({ sub: promoterId, email: normalizedEmail }, authSecret);
 
         return new Response(JSON.stringify({ success: true, promoter: promoterAccount, token }), {

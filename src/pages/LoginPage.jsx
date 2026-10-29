@@ -29,12 +29,6 @@ export default function LoginPage() {
         }
     };
 
-    const handleFillDemo = () => {
-        setEmail('promoter@vtix.com');
-        setPassword('password123');
-        setError('');
-    };
-
     return (
         <div className="animate-fade-in" style={{ maxWidth: '460px', margin: '40px auto 80px', padding: '0 16px' }}>
             <div className="glass-panel" style={{ padding: '40px 32px', position: 'relative' }}>
@@ -140,34 +134,6 @@ export default function LoginPage() {
                         </Link>
                     </div>
                 </form>
-
-                {/* Convenient Seed/Demo Credentials helper (Development Only) */}
-                {import.meta.env.DEV && (
-                    <div style={{
-                        marginTop: '32px',
-                        paddingTop: '20px',
-                        borderTop: '1px solid var(--border-color)',
-                        textAlign: 'center',
-                        fontSize: '0.85rem',
-                        color: 'var(--text-muted)'
-                    }}>
-                        <span>Testing credentials: </span>
-                        <button
-                            type="button"
-                            onClick={handleFillDemo}
-                            style={{
-                                background: 'none',
-                                border: 'none',
-                                color: 'var(--accent-secondary)',
-                                textDecoration: 'underline',
-                                cursor: 'pointer',
-                                fontSize: '0.85rem'
-                            }}
-                        >
-                            Use Demo Account (promoter@vtix.com)
-                        </button>
-                    </div>
-                )}
             </div>
         </div>
     );

@@ -4,7 +4,7 @@ import { useEventData } from '../hooks/useEventData';
 import QRCode from 'qrcode';
 import { getGoogleCalendarUrl, downloadIcsCalendar } from '../utils/calendar';
 import WalletModal from '../components/WalletModal';
-import { encodePassToken, decodePassToken } from '../utils/passToken';
+import { getServerPassToken } from '../utils/passToken';
 import { sanitizeCssColor } from '../utils/security';
 
 export default function TicketPassPage() {
@@ -22,16 +22,37 @@ export default function TicketPassPage() {
     const order = (orders || []).find(o => o.orderId === orderId);
     const event = order ? (events || []).find(e => e.id === order.eventId) : null;
 
-    // Automatically hydrate the order if opening on a new device (e.g. from confirmation email)
+    // Verify the order and HMAC-signed pass token against the server D1 database (/api/tickets/verify)
     useEffect(() => {
-        const passParam = searchParams.get('pass');
-        if (!order && passParam && recordOrder) {
-            const decodedOrder = decodePassToken(passParam);
-            if (decodedOrder && String(decodedOrder.orderId) === String(orderId)) {
-                recordOrder(decodedOrder);
-            }
+        if (!orderId) return;
+        const passParam = searchParams.get('pass') || '';
+        let authToken = null;
+        try {
+            const savedPromoter = localStorage.getItem('vtix_current_promoter');
+            if (savedPromoter) authToken = JSON.parse(savedPromoter)?.token || null;
+        } catch {
+            authToken = null;
         }
-    }, [order, orderId, searchParams, recordOrder]);
+
+        if (!passParam && !authToken) return;
+
+        let isCancelled = false;
+        fetch(`/api/tickets/verify?orderId=${encodeURIComponent(orderId)}&pass=${encodeURIComponent(passParam)}`, {
+            headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+            credentials: 'same-origin'
+        })
+            .then(res => (res.ok ? res.json() : null))
+            .then(data => {
+                if (!isCancelled && data?.order && recordOrder) {
+                    recordOrder(data.order);
+                }
+            })
+            .catch(() => {});
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [orderId, searchParams, recordOrder]);
 
     // Expand tickets if older order structure was missing them
     const tickets = useMemo(() => {
@@ -71,8 +92,8 @@ export default function TicketPassPage() {
     useEffect(() => {
         if (!order || !currentTicket) return;
 
-        // The QR code contains a direct verification URL that opens this ticket pass and verifies it
-        const passToken = encodePassToken(order);
+        // The QR code contains a direct verification URL with the server-signed HMAC pass token
+        const passToken = searchParams.get('pass') || getServerPassToken(order);
         const passQuery = passToken ? `&pass=${encodeURIComponent(passToken)}` : '';
         const verifyUrl = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket.ticketId}&checkin=1${passQuery}`;
 
@@ -87,7 +108,7 @@ export default function TicketPassPage() {
         })
             .then(url => setQrCodeDataUrl(url))
             .catch(err => console.error('Failed to generate ticket QR code:', err));
-    }, [order, currentTicket]);
+    }, [order, currentTicket, searchParams]);
 
     if (!order) {
         return (
@@ -113,7 +134,7 @@ export default function TicketPassPage() {
     const dominantColor = sanitizeCssColor(themeColors.dominant, 'var(--accent-primary)');
 
     const handleCopyTicketLink = () => {
-        const passToken = encodePassToken(order);
+        const passToken = searchParams.get('pass') || getServerPassToken(order);
         const passQuery = passToken ? `&pass=${encodeURIComponent(passToken)}` : '';
         const url = `${window.location.origin}/tickets/${order.orderId}?ticketId=${currentTicket?.ticketId || ''}${passQuery}`;
         navigator.clipboard.writeText(url);
@@ -121,7 +142,7 @@ export default function TicketPassPage() {
         setTimeout(() => setCopiedLink(false), 2500);
     };
 
-    const handleStaffCheckIn = () => {
+    const handleStaffCheckIn = async () => {
         if (!currentTicket) return;
 
         if (currentTicket.checkInStatus === 'checked_in') {
@@ -130,9 +151,14 @@ export default function TicketPassPage() {
             return;
         }
 
-        checkInTicket(order.orderId, currentTicket.ticketId);
-        setCheckInMessage('✅ Ticket successfully checked in! Entry granted.');
-        setTimeout(() => setCheckInMessage(''), 3500);
+        try {
+            const passToken = searchParams.get('pass') || getServerPassToken(order);
+            await checkInTicket(order.orderId, currentTicket.ticketId, passToken);
+            setCheckInMessage('✅ Ticket verified against D1 database and checked in! Entry granted.');
+        } catch (err) {
+            setCheckInMessage(`⚠️ ${err.message || 'Check-in failed.'}`);
+        }
+        setTimeout(() => setCheckInMessage(''), 4000);
     };
 
     const isCheckedIn = currentTicket?.checkInStatus === 'checked_in';
